@@ -104,7 +104,10 @@ function dateOrdinal(date: Pick<ZonedParts, "year" | "month" | "day">) {
   return Math.floor(Date.UTC(date.year, date.month - 1, date.day) / 86_400_000);
 }
 
-function bucketStart(timestampSeconds: number, timeframe: Timeframe) {
+export function timeframeBucketStart(
+  timestampSeconds: number,
+  timeframe: Timeframe,
+) {
   const interval = intradaySeconds[timeframe];
   if (interval) {
     const start = sessionStart(timestampSeconds);
@@ -147,7 +150,7 @@ export function aggregateBars(
   const buckets = new Map<number, MarketBar>();
 
   for (const bar of sorted) {
-    const time = bucketStart(bar.time, timeframe);
+    const time = timeframeBucketStart(bar.time, timeframe);
     const existing = buckets.get(time);
     if (!existing) {
       buckets.set(time, { ...bar, time });
@@ -165,4 +168,31 @@ export function aggregateBars(
   }
 
   return [...buckets.values()].sort((a, b) => a.time - b.time);
+}
+
+export function applyLiveBar(
+  current: MarketBar[],
+  sourceBar: MarketBar,
+  timeframe: Timeframe,
+) {
+  const time = timeframeBucketStart(sourceBar.time, timeframe);
+  const index = current.findIndex((bar) => bar.time === time);
+
+  if (index === -1) {
+    return [...current, { ...sourceBar, time }]
+      .sort((a, b) => a.time - b.time)
+      .slice(-600);
+  }
+
+  const existing = current[index];
+  const next = [...current];
+  next[index] = {
+    time,
+    open: existing.open,
+    high: Math.max(existing.high, sourceBar.high),
+    low: Math.min(existing.low, sourceBar.low),
+    close: sourceBar.close,
+    volume: existing.volume + sourceBar.volume,
+  };
+  return next;
 }

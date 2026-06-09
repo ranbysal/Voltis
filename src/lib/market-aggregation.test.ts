@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { MarketBar } from "./domain";
-import { aggregateBars, sessionStart } from "./market-aggregation";
+import {
+  aggregateBars,
+  applyLiveBar,
+  sessionStart,
+} from "./market-aggregation";
 
 function bar(time: number, price: number, volume = 1): MarketBar {
   return {
@@ -57,5 +61,24 @@ describe("CME ETH session aggregation", () => {
     expect(result[0].time).toBe(Date.UTC(2026, 5, 8, 22, 0) / 1000);
     expect(result[1].time).toBe(Date.UTC(2026, 5, 9, 22, 0) / 1000);
   });
-});
 
+  it("merges finalized minute bars into the selected timeframe", () => {
+    const current = [
+      bar(Date.UTC(2026, 5, 9, 22, 0) / 1000, 100, 2),
+    ];
+    const next = applyLiveBar(
+      current,
+      bar(Date.UTC(2026, 5, 9, 22, 3) / 1000, 105, 4),
+      "5m",
+    );
+
+    expect(next).toHaveLength(1);
+    expect(next[0]).toMatchObject({
+      open: 100,
+      high: 107,
+      low: 98,
+      close: 106,
+      volume: 6,
+    });
+  });
+});
