@@ -1,29 +1,35 @@
 "use client";
 
 import {
+  BarChart3,
   Bell,
+  BookOpen,
   ChevronDown,
   ChevronRight,
   CircleUserRound,
   Crosshair,
   Eye,
   EyeOff,
+  Folder,
   Grid2X2,
+  Inbox,
   Layers3,
   Lock,
   Maximize2,
-  Minus,
   MoreHorizontal,
   PanelRightClose,
   RefreshCw,
   RotateCcw,
-  Settings2,
+  Ruler,
+  Search,
   ShieldCheck,
+  SlidersHorizontal,
+  Smile,
   Trash2,
   TrendingDown,
   TrendingUp,
   Unlock,
-  Zap,
+  ZoomIn,
 } from "lucide-react";
 import { nanoid } from "nanoid";
 import {
@@ -178,7 +184,6 @@ export function TradingWorkspace() {
   const [marketLoading, setMarketLoading] = useState(false);
   const [marketStreamStatus, setMarketStreamStatus] =
     useState<MarketStreamStatus>("connecting");
-  const [compactViewport, setCompactViewport] = useState(false);
   const [armed, setArmed] = useState(false);
   const [paperMessage, setPaperMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -187,7 +192,6 @@ export function TradingWorkspace() {
     "Apex 50K",
     "Take Profit 50K",
   ]);
-  const clockRef = useRef<HTMLSpanElement>(null);
   const historyRequestRef = useRef(0);
   const activeContractRef = useRef(DEFAULT_MARKET_META.activeContract);
   const selectionRef = useRef({
@@ -265,14 +269,6 @@ export function TradingWorkspace() {
       }
     });
   }, [loadMarketHistory]);
-
-  useEffect(() => {
-    const query = window.matchMedia("(max-width: 1023px)");
-    const update = () => setCompactViewport(query.matches);
-    update();
-    query.addEventListener("change", update);
-    return () => query.removeEventListener("change", update);
-  }, []);
 
   useEffect(() => {
     if (hydrated) {
@@ -471,23 +467,6 @@ export function TradingWorkspace() {
     workspace.family,
     workspace.timeframe,
   ]);
-
-  useEffect(() => {
-    const updateClock = () => {
-      if (clockRef.current) {
-        clockRef.current.textContent = new Intl.DateTimeFormat("en-US", {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          hour12: false,
-          timeZone: "America/New_York",
-        }).format(new Date());
-      }
-    };
-    updateClock();
-    const interval = window.setInterval(updateClock, 1_000);
-    return () => window.clearInterval(interval);
-  }, []);
 
   useEffect(() => {
     if (!armed) {
@@ -703,433 +682,307 @@ export function TradingWorkspace() {
         ? "DETERMINISTIC DEMO FEED"
         : "CONNECTING LIVE DATA";
 
-  if (compactViewport) {
-    return (
-      <main className="min-h-dvh bg-[#050609] text-[#f3f5f7]">
-        <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-white/[0.07] bg-[#080a0e]/95 px-4 backdrop-blur">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#20c6c9] text-[#041011]">
-              <Zap size={16} strokeWidth={2.8} />
-            </div>
-            <div>
-              <p className="text-sm font-semibold tracking-[-0.03em]">VOLTIS</p>
-              <p className="font-mono text-[8px] uppercase tracking-[0.14em] text-[#687282]">
-                Read-only workspace
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1.5 font-mono text-[8px] text-[#7e8998]">
-              <span
-                className={cn(
-                  "h-1.5 w-1.5 rounded-full",
-                  marketStreamStatus === "live"
-                    ? "bg-[#36d399] shadow-[0_0_8px_#36d399]"
-                    : marketStreamStatus === "reconnecting" ||
-                        marketStreamStatus === "connecting"
-                      ? "animate-pulse bg-[#e0ad54]"
-                      : "bg-[#697384]",
-                )}
-              />
-              {marketStreamStatus === "live" ? "LIVE" : "VIEW"}
-            </div>
-            <button
-              title="Sign out"
-              onClick={signOut}
-              className="flex h-8 w-8 items-center justify-center rounded-md text-[#788293] hover:bg-white/[0.05] hover:text-white"
-            >
-              <CircleUserRound size={16} />
-            </button>
-          </div>
-        </header>
-
-        <section className="border-b border-white/[0.07] bg-[#080a0e] px-4 py-3">
-          <div className="flex items-center justify-between gap-4">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-sm font-semibold">
-                  {workspace.family}1!
-                </span>
-                <span className="rounded bg-[#151a21] px-1.5 py-0.5 font-mono text-[8px] text-[#6f7988]">
-                  {FAMILY_DETAILS[workspace.family].exchange}
-                </span>
-              </div>
-              <p className="mt-1 truncate text-[10px] text-[#687282]">
-                {FAMILY_DETAILS[workspace.family].name}
-              </p>
-            </div>
-            <div className="text-right">
-              <p className="font-mono text-lg font-medium tabular-nums">
-                {lastBar ? formatPrice(lastBar.close, workspace.family) : "--"}
-              </p>
-              <p
-                className={cn(
-                  "font-mono text-[9px]",
-                  sessionMove >= 0 ? "text-[#3bd9a0]" : "text-[#ff5976]",
-                )}
-              >
-                {sessionMove >= 0 ? "+" : ""}
-                {sessionMove.toFixed(2)}%
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-3 flex items-center gap-2">
-            {(["YM", "NQ"] as const).map((family) => (
-              <button
-                key={family}
-                onClick={() => selectFamily(family)}
-                className={cn(
-                  "h-8 flex-1 rounded-md border border-white/[0.07] font-mono text-[10px] font-semibold text-[#697384]",
-                  workspace.family === family &&
-                    "border-[#2ccdd0]/20 bg-[#20c6c9]/10 text-[#55dfe1]",
-                )}
-              >
-                {family}
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <div className="overflow-x-auto border-b border-white/[0.07] bg-[#080a0e] px-3 py-2">
-          <div className="flex min-w-max gap-1">
-            {TIMEFRAMES.map((item) => (
-              <button
-                key={item}
-                onClick={() => selectTimeframe(item)}
-                className={cn(
-                  "h-8 rounded px-3 font-mono text-[10px] font-semibold text-[#6e7887]",
-                  workspace.timeframe === item &&
-                    "bg-[#252c36] text-white",
-                )}
-              >
-                {item}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="h-[58dvh] min-h-[420px] border-b border-white/[0.07]">
-          <MarketChart
-            bars={bars}
-            family={workspace.family}
-            timeframe={workspace.timeframe}
-            fibs={visibleFibs}
-            dataLabel={dataLabel}
-            readOnly
-            onUpdateFib={updateFib}
-          />
-        </div>
-
-        <section className="px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-[11px] font-medium">Fib layers</p>
-              <p className="mt-0.5 text-[9px] text-[#626c7b]">
-                Visibility only. Editing and trading require desktop.
-              </p>
-            </div>
-            <span className="font-mono text-[9px] text-[#596270]">
-              {marketMeta.activeContract} / ETH
-            </span>
-          </div>
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            {familyFibs.map((fib) => (
-              <button
-                key={fib.id}
-                onClick={() => updateFib(fib.id, { visible: !fib.visible })}
-                className={cn(
-                  "flex items-center justify-between rounded-lg border border-white/[0.07] bg-[#0d1015] px-3 py-3 text-left",
-                  !fib.visible && "opacity-45",
-                )}
-              >
-                <span className="flex items-center gap-2">
-                  <span
-                    className={cn(
-                      "h-1.5 w-1.5 rounded-full",
-                      fib.direction === "buy"
-                        ? "bg-[#39dca4]"
-                        : "bg-[#ff5a75]",
-                    )}
-                  />
-                  <span className="font-mono text-[10px] font-semibold">
-                    {fib.timeframe.toUpperCase()} {fib.direction.toUpperCase()}
-                  </span>
-                </span>
-                {fib.visible ? <Eye size={13} /> : <EyeOff size={13} />}
-              </button>
-            ))}
-          </div>
-        </section>
-      </main>
-    );
-  }
-
   return (
-    <main className="min-h-dvh bg-[#050609] text-[#f3f5f7]">
-      <div className="hidden min-h-dvh grid-rows-[52px_minmax(0,1fr)] lg:grid">
-        <header className="flex items-center border-b border-white/[0.07] bg-[#080a0e] px-3">
-          <div className="flex w-[178px] items-center gap-2.5 border-r border-white/[0.07]">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#20c6c9] text-[#041011] shadow-[0_0_24px_rgba(32,198,201,0.18)]">
-              <Zap size={17} strokeWidth={2.8} />
+    <main className="h-dvh min-w-[1180px] overflow-hidden bg-[#d6d6d3] p-6 text-[#171717]">
+      <div className="mx-auto grid h-full max-w-[1536px] grid-rows-[74px_minmax(0,1fr)] overflow-hidden rounded-xl border border-white/80 bg-[#f8f8f6] shadow-[0_24px_70px_rgba(0,0,0,0.16)]">
+        <header className="flex items-center border-b border-[#e3e3df] px-7">
+          <div className="flex w-[250px] items-center gap-3">
+            <div className="relative h-9 w-9">
+              <span className="absolute left-0.5 top-1.5 h-6 w-8 rotate-45 rounded-full border-2 border-black" />
+              <span className="absolute left-0.5 top-1.5 h-6 w-8 -rotate-45 rounded-full border-2 border-black" />
             </div>
-            <span className="text-[15px] font-semibold tracking-[-0.03em]">
-              VOLTIS
-            </span>
-            <span className="rounded border border-[#20c6c9]/20 bg-[#20c6c9]/10 px-1.5 py-0.5 font-mono text-[8px] font-semibold text-[#56dfe1]">
-              BETA
+            <span className="text-[20px] font-semibold tracking-[-0.04em]">
+              Voltis
             </span>
           </div>
 
-          <div className="flex min-w-0 flex-1 items-center gap-5 px-4">
-            <button className="flex items-center gap-2 rounded-md border border-white/[0.08] bg-white/[0.025] px-3 py-1.5 text-xs font-medium text-[#dce1e7] hover:bg-white/[0.05]">
-              <span>{workspace.family}1!</span>
-              <ChevronDown size={13} className="text-[#697384]" />
-            </button>
-            <div className="flex items-center gap-2 font-mono text-[10px] text-[#7e8998]">
-              <span
-                className={cn(
-                  "h-1.5 w-1.5 rounded-full",
-                  marketLoading || marketStreamStatus === "connecting"
-                    ? "animate-pulse bg-[#e0ad54]"
-                    : marketStreamStatus === "reconnecting"
-                      ? "animate-pulse bg-[#ff8a5b]"
-                      : marketStreamStatus === "unavailable"
-                        ? "bg-[#697384]"
-                    : "bg-[#36d399] shadow-[0_0_8px_#36d399]",
-                )}
-              />
-              {marketLoading || marketStreamStatus === "connecting"
-                ? "CONNECTING"
-                : marketStreamStatus === "live"
-                  ? "LIVE CME GLOBEX"
-                  : marketStreamStatus === "reconnecting"
-                    ? "RECONNECTING"
-                    : marketMeta.provider === "databento"
-                      ? "CME HISTORICAL"
-                      : "DEMO FEED"}
-              <span className="text-[#38404d]">/</span>
-              ETH
-            </div>
-            <div className="h-4 w-px bg-white/[0.07]" />
-            <span className="font-mono text-[10px] text-[#697384]">
-              Front month:{" "}
-              <span className="text-[#a9b2bf]">
-                {marketMeta.activeContract}
-              </span>
-            </span>
-          </div>
-
-          <div className="flex items-center gap-1.5">
-            <div className="mr-3 text-right">
-              <span ref={clockRef} className="font-mono text-[11px] tabular-nums">
-                00:00:00
-              </span>
-              <div className="font-mono text-[8px] uppercase tracking-[0.12em] text-[#596270]">
-                New York
-              </div>
-            </div>
-            {[Bell, Settings2].map((Icon, index) => (
-              <button
-                key={index}
-                className="flex h-8 w-8 items-center justify-center rounded-md text-[#788293] transition hover:bg-white/[0.05] hover:text-white"
-              >
-                <Icon size={16} />
-              </button>
-            ))}
-            <button
-              title="Sign out"
-              onClick={signOut}
-              className="flex h-8 w-8 items-center justify-center rounded-md text-[#788293] transition hover:bg-white/[0.05] hover:text-white"
-            >
-              <CircleUserRound size={16} />
-            </button>
-          </div>
-        </header>
-
-        <section className="grid min-h-0 grid-cols-[52px_minmax(0,1fr)_326px]">
-          <aside className="flex flex-col items-center border-r border-white/[0.07] bg-[#07090d] py-3">
-            <div className="flex flex-col gap-1">
-              {[
-                Crosshair,
-                TrendingUp,
-                Minus,
-                Layers3,
-                Grid2X2,
-              ].map((Icon, index) => (
+          <nav className="flex items-center gap-2">
+            {[BarChart3, Inbox, Folder, BookOpen, Grid2X2].map(
+              (Icon, index) => (
                 <button
-                  key={index}
+                  key={Icon.displayName ?? index}
+                  aria-label={`Workspace navigation ${index + 1}`}
                   className={cn(
-                    "relative flex h-9 w-9 items-center justify-center rounded-md text-[#646e7d] transition hover:bg-white/[0.05] hover:text-[#d9dfe6]",
-                    index === 1 &&
-                      "bg-[#20c6c9]/10 text-[#46d8da] before:absolute before:-left-1.5 before:h-5 before:w-0.5 before:rounded-full before:bg-[#2ad0d3]",
+                    "flex h-11 w-11 items-center justify-center rounded-lg border border-[#eeeeeb] bg-white text-[#222] shadow-sm transition hover:bg-[#f2f2ef]",
+                    index === 0 && "border-black bg-black text-white hover:bg-black",
                   )}
-                >
-                  <Icon size={17} />
-                </button>
-              ))}
-            </div>
-            <div className="mt-auto flex flex-col gap-1">
-              {[RotateCcw, Maximize2].map((Icon, index) => (
-                <button
-                  key={index}
-                  className="flex h-9 w-9 items-center justify-center rounded-md text-[#646e7d] hover:bg-white/[0.05] hover:text-white"
                 >
                   <Icon size={16} />
                 </button>
-              ))}
+              ),
+            )}
+          </nav>
+
+          <div className="ml-auto flex items-center gap-2">
+            <div className="flex h-11 w-[250px] items-center gap-3 rounded-lg border border-[#eeeeeb] bg-white px-4 text-[#999] shadow-sm">
+              <Search size={17} className="text-black" />
+              <span className="text-[11px]">Search Dashboard</span>
             </div>
-          </aside>
+            <button
+              aria-label="Notifications"
+              className="relative flex h-11 w-11 items-center justify-center rounded-lg border border-[#eeeeeb] bg-white shadow-sm"
+            >
+              <Bell size={16} />
+              <span className="absolute right-2.5 top-2 h-1.5 w-1.5 rounded-full bg-[#d9414e]" />
+            </button>
+            <button
+              onClick={signOut}
+              className="flex h-11 items-center gap-2 rounded-lg border border-[#eeeeeb] bg-white px-3 shadow-sm"
+              title="Sign out"
+            >
+              <CircleUserRound size={22} />
+              <span className="text-left">
+                <span className="block text-[10px] font-medium">Yazan</span>
+                <span className="flex items-center gap-1 text-[8px] text-[#858585]">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[#48bd78]" />
+                  Online
+                </span>
+              </span>
+              <ChevronDown size={14} className="ml-2" />
+            </button>
+          </div>
+        </header>
 
-          <div className="grid min-w-0 grid-rows-[58px_46px_minmax(0,1fr)_30px]">
-            <div className="flex items-center justify-between border-b border-white/[0.07] bg-[#080a0e] px-4">
-              <div className="flex min-w-0 items-center gap-3">
-                <div className="flex h-8 w-8 items-center justify-center rounded-md border border-white/[0.08] bg-[#11151b] font-mono text-[10px] font-bold text-[#cfd5dc]">
-                  {workspace.family}
-                </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h1 className="truncate text-[13px] font-medium">
-                      {FAMILY_DETAILS[workspace.family].name}
-                    </h1>
-                    <span className="rounded bg-[#151a21] px-1.5 py-0.5 font-mono text-[8px] text-[#6f7988]">
-                      {FAMILY_DETAILS[workspace.family].exchange}
-                    </span>
-                  </div>
-                  <p className="mt-0.5 font-mono text-[9px] text-[#5f6978]">
-                    {marketMeta.adjustment} continuous /{" "}
-                    {marketMeta.provider === "databento"
-                      ? marketMeta.delayed
-                        ? "Databento historical"
-                        : "Databento live"
-                      : "deterministic simulation"}
-                  </p>
-                </div>
+        <section className="grid min-h-0 grid-cols-[minmax(0,1fr)_330px]">
+          <div className="grid min-w-0 grid-rows-[88px_54px_minmax(0,1fr)_82px] gap-0 px-7 pb-6">
+            <div className="flex items-end justify-between pb-5">
+              <div>
+                <h1 className="text-[29px] font-medium tracking-[-0.04em]">
+                  Overview
+                </h1>
+                <p className="mt-1 text-[9px] text-[#8a8a86]">
+                  Voltis workspace &nbsp;/&nbsp; {workspace.family} Trading
+                </p>
               </div>
-
-              <div className="flex items-center gap-6">
-                <div className="text-right">
-                  <div className="font-mono text-lg font-medium tabular-nums tracking-[-0.04em]">
+              <div className="flex items-center gap-3 text-right">
+                <div>
+                  <p className="font-mono text-[20px] font-medium tabular-nums">
                     {lastBar ? formatPrice(lastBar.close, workspace.family) : "--"}
-                  </div>
-                  <div
+                  </p>
+                  <p
                     className={cn(
                       "font-mono text-[9px]",
-                      sessionMove >= 0 ? "text-[#3bd9a0]" : "text-[#ff5976]",
+                      sessionMove >= 0 ? "text-[#36a968]" : "text-[#c64b55]",
                     )}
                   >
                     {sessionMove >= 0 ? "+" : ""}
                     {sessionMove.toFixed(2)}% session
-                  </div>
+                  </p>
                 </div>
-                <div className="flex rounded-md border border-white/[0.08] bg-[#0d1015] p-0.5">
+                <div className="h-9 w-px bg-[#e1e1dd]" />
+                <div className="text-left text-[9px] text-[#777]">
+                  <p>{marketMeta.activeContract} · ETH</p>
+                  <p className="mt-1 flex items-center gap-1.5">
+                    <span
+                      className={cn(
+                        "h-1.5 w-1.5 rounded-full",
+                        marketLoading || marketStreamStatus === "connecting"
+                          ? "animate-pulse bg-[#d7a33f]"
+                          : marketStreamStatus === "live"
+                            ? "bg-[#47bd78]"
+                            : "bg-[#a4a4a0]",
+                      )}
+                    />
+                    {dataLabel}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1">
+                {["Chart", "Positions", "Trade Journal", "Analytics"].map(
+                  (label, index) => (
+                    <button
+                      key={label}
+                      className={cn(
+                        "h-10 rounded-lg border border-[#e5e5e1] bg-transparent px-5 text-[10px] transition hover:bg-white",
+                        index === 0 && "border-black bg-black text-white hover:bg-black",
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ),
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="flex rounded-lg border border-[#e5e5e1] bg-white p-1">
                   {(["YM", "NQ"] as const).map((family) => (
                     <button
                       key={family}
                       onClick={() => selectFamily(family)}
                       className={cn(
-                        "rounded px-3 py-1.5 font-mono text-[10px] font-semibold text-[#697384] transition",
-                        workspace.family === family &&
-                          "bg-[#252c36] text-white shadow-sm",
+                        "h-8 rounded-md px-4 text-[10px] font-medium",
+                        workspace.family === family && "bg-black text-white",
                       )}
                     >
                       {family}
                     </button>
                   ))}
                 </div>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between border-b border-white/[0.07] bg-[#080a0e] px-3">
-              <div className="flex items-center gap-1">
-                {TIMEFRAMES.map((item) => (
-                  <button
-                    key={item}
-                    onClick={() => selectTimeframe(item)}
-                    className={cn(
-                      "h-7 rounded px-2.5 font-mono text-[10px] font-semibold text-[#6e7887] transition hover:bg-white/[0.04] hover:text-[#d6dce3]",
-                      workspace.timeframe === item &&
-                        "bg-[#222832] text-white shadow-inner",
-                    )}
-                  >
-                    {item}
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex items-center gap-1.5">
+                <div className="flex rounded-lg border border-[#e5e5e1] bg-white p-1">
+                  {TIMEFRAMES.map((item) => (
+                    <button
+                      key={item}
+                      onClick={() => selectTimeframe(item)}
+                      className={cn(
+                        "h-8 rounded-md px-2.5 font-mono text-[9px] text-[#666]",
+                        workspace.timeframe === item && "bg-black text-white",
+                      )}
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
                 <button
                   onClick={() => addFib("buy")}
-                  className="flex h-7 items-center gap-1.5 rounded border border-[#37d69d]/20 bg-[#37d69d]/10 px-2.5 text-[10px] font-semibold text-[#4ee2ac] transition hover:bg-[#37d69d]/15"
+                  className="flex h-10 items-center gap-1.5 rounded-lg border border-[#dce9e0] bg-[#edf7f0] px-3 text-[9px] font-medium text-[#247f4b]"
                 >
                   <TrendingUp size={13} />
-                  ADD BUY FIB
+                  Buy fib
                 </button>
                 <button
                   onClick={() => addFib("sell")}
-                  className="flex h-7 items-center gap-1.5 rounded border border-[#ff526f]/20 bg-[#ff526f]/10 px-2.5 text-[10px] font-semibold text-[#ff7089] transition hover:bg-[#ff526f]/15"
+                  className="flex h-10 items-center gap-1.5 rounded-lg border border-[#eadfe0] bg-[#f8eeee] px-3 text-[9px] font-medium text-[#9f3e47]"
                 >
                   <TrendingDown size={13} />
-                  ADD SELL FIB
+                  Sell fib
                 </button>
-                <button className="flex h-7 w-7 items-center justify-center rounded text-[#687282] hover:bg-white/[0.05] hover:text-white">
+                <button
+                  aria-label="More chart controls"
+                  className="flex h-10 w-10 items-center justify-center rounded-lg border border-[#e5e5e1] bg-white"
+                >
                   <MoreHorizontal size={16} />
                 </button>
               </div>
             </div>
 
-            <MarketChart
-              bars={bars}
-              family={workspace.family}
-              timeframe={workspace.timeframe}
-              fibs={visibleFibs}
-              dataLabel={
-                dataLabel
-              }
-              onUpdateFib={updateFib}
-            />
+            <div className="grid min-h-0 grid-cols-[52px_minmax(0,1fr)] grid-rows-[44px_minmax(0,1fr)] overflow-hidden rounded-xl border border-[#dfdfda] bg-[#fbfbfa]">
+              <aside className="row-span-2 flex flex-col items-center border-r border-[#e5e5e1] py-3">
+                <div className="flex flex-col gap-1">
+                  {[
+                    Crosshair,
+                    TrendingUp,
+                    SlidersHorizontal,
+                    Layers3,
+                    Smile,
+                    Ruler,
+                    ZoomIn,
+                  ].map((Icon, index) => (
+                    <button
+                      key={Icon.displayName ?? index}
+                      aria-label={`Chart tool ${index + 1}`}
+                      className={cn(
+                        "flex h-9 w-9 items-center justify-center rounded-md text-[#272727] transition hover:bg-[#efefec]",
+                        index === 0 && "text-[#4b8ee8]",
+                      )}
+                    >
+                      <Icon size={17} />
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-auto flex flex-col gap-1">
+                  {[RotateCcw, Maximize2].map((Icon, index) => (
+                    <button
+                      key={Icon.displayName ?? index}
+                      aria-label={`Chart utility ${index + 1}`}
+                      className="flex h-9 w-9 items-center justify-center rounded-md text-[#444] hover:bg-[#efefec]"
+                    >
+                      <Icon size={16} />
+                    </button>
+                  ))}
+                </div>
+              </aside>
 
-            <div className="flex items-center justify-between border-t border-white/[0.07] bg-[#080a0e] px-3 font-mono text-[9px] text-[#596270]">
-              <div className="flex items-center gap-4">
-                <span>ETH 17:00-16:00 CT</span>
-                <span>Deviation 20 / Depth 50</span>
-                <span>
-                  {bars.length} bars / {marketMeta.sourceSchema}
+              <div className="flex items-center gap-3 border-b border-[#e8e8e4] px-4">
+                <span className="font-mono text-[11px] font-semibold">
+                  {workspace.family}1! · {workspace.timeframe} ·{" "}
+                  {FAMILY_DETAILS[workspace.family].exchange}
+                </span>
+                <span className="h-1.5 w-1.5 rounded-full bg-[#47bd78]" />
+                <span className="font-mono text-[9px] text-[#888]">
+                  {FAMILY_DETAILS[workspace.family].name}
+                </span>
+                <span className="ml-auto font-mono text-[8px] text-[#999]">
+                  ETH 17:00-16:00 CT · Deviation 20 / Depth 50 · B-ADJ
                 </span>
               </div>
-              <div className="flex items-center gap-3">
-                <span>UTC-4</span>
-                <span className="text-[#778291]">B-ADJ</span>
-              </div>
+
+              <MarketChart
+                bars={bars}
+                family={workspace.family}
+                timeframe={workspace.timeframe}
+                fibs={visibleFibs}
+                dataLabel={dataLabel}
+                onUpdateFib={updateFib}
+              />
+            </div>
+
+            <div className="grid grid-cols-4 gap-3 pt-3">
+              {[
+                ["Current Price", lastBar ? formatPrice(lastBar.close, workspace.family) : "--"],
+                ["Session Move", `${sessionMove >= 0 ? "+" : ""}${sessionMove.toFixed(2)}%`],
+                ["Visible Fibs", String(visibleFibs.length)],
+                ["Data Source", marketMeta.provider === "databento" ? "Databento" : "Demo"],
+              ].map(([label, value], index) => (
+                <div
+                  key={label}
+                  className="flex items-center justify-between rounded-lg border border-[#e2e2de] bg-white px-4"
+                >
+                  <div>
+                    <p className="text-[8px] text-[#777]">{label}</p>
+                    <p
+                      className={cn(
+                        "mt-1 font-mono text-[14px] font-medium",
+                        index === 1 && sessionMove >= 0 && "text-[#47ad70]",
+                      )}
+                    >
+                      {value}
+                    </p>
+                  </div>
+                  <svg width="76" height="28" viewBox="0 0 76 28" fill="none">
+                    <path
+                      d="M2 24L10 20L17 22L25 13L33 18L41 8L49 12L57 4L65 9L74 2"
+                      stroke={index === 3 ? "#222" : "#55bb7d"}
+                      strokeWidth="1.5"
+                    />
+                  </svg>
+                </div>
+              ))}
             </div>
           </div>
 
-          <aside className="grid min-h-0 grid-rows-[42px_minmax(0,1fr)] border-l border-white/[0.07] bg-[#090b0f]">
-            <div className="flex items-center border-b border-white/[0.07] px-2">
+          <aside className="grid min-h-0 grid-rows-[58px_50px_minmax(0,1fr)] border-l border-[#dfdfda] bg-[#fafaf8]">
+            <div className="flex items-center justify-between border-b border-[#e3e3df] px-4">
+              <div className="flex items-center gap-2 text-[12px] font-medium">
+                <TrendingUp size={15} />
+                Trading Panel
+              </div>
+              <PanelRightClose size={15} className="text-[#999]" />
+            </div>
+
+            <div className="grid grid-cols-2 gap-1 border-b border-[#e3e3df] p-2">
               {(["fibs", "trade"] as const).map((mode) => (
                 <button
                   key={mode}
                   onClick={() => setPanelMode(mode)}
                   className={cn(
-                    "relative h-full flex-1 font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-[#5e6877]",
-                    panelMode === mode &&
-                      "text-[#e5e9ed] after:absolute after:inset-x-5 after:bottom-0 after:h-px after:bg-[#2cd0d3]",
+                    "h-8 rounded-md text-[10px] text-[#555]",
+                    panelMode === mode && "border border-[#e2e2de] bg-white text-black shadow-sm",
                   )}
                 >
-                  {mode === "fibs" ? `Fib layers (${familyFibs.length})` : "Trade"}
+                  {mode === "fibs" ? `Fib Layers (${familyFibs.length})` : "Trade"}
                 </button>
               ))}
-              <button className="flex h-8 w-8 items-center justify-center rounded text-[#5e6877] hover:bg-white/[0.05] hover:text-white">
-                <PanelRightClose size={15} />
-              </button>
             </div>
 
             {panelMode === "fibs" ? (
               <div className="min-h-0 overflow-y-auto">
-                <div className="flex items-center justify-between border-b border-white/[0.06] px-3 py-3">
+                <div className="flex items-center justify-between border-b border-[#e5e5e1] px-4 py-4">
                   <div>
                     <p className="text-[11px] font-medium">Visible overlays</p>
-                    <p className="mt-0.5 text-[9px] text-[#626c7b]">
+                    <p className="mt-1 text-[9px] text-[#888]">
                       Drag active anchors to lock them.
                     </p>
                   </div>
@@ -1145,7 +998,7 @@ export function TradingWorkspace() {
                           ),
                         }))
                       }
-                      className="flex h-7 w-7 items-center justify-center rounded text-[#697384] hover:bg-white/[0.05] hover:text-white"
+                      className="flex h-8 w-8 items-center justify-center rounded-md border border-[#e3e3df] bg-white text-[#555]"
                     >
                       <Eye size={14} />
                     </button>
@@ -1160,21 +1013,21 @@ export function TradingWorkspace() {
                           ),
                         }))
                       }
-                      className="flex h-7 w-7 items-center justify-center rounded text-[#697384] hover:bg-white/[0.05] hover:text-white"
+                      className="flex h-8 w-8 items-center justify-center rounded-md border border-[#e3e3df] bg-white text-[#555]"
                     >
                       <EyeOff size={14} />
                     </button>
                   </div>
                 </div>
 
-                <div className="space-y-1 p-2">
+                <div className="space-y-2 p-3">
                   {familyFibs.length === 0 ? (
-                    <div className="rounded-lg border border-dashed border-white/[0.09] px-4 py-10 text-center">
-                      <Layers3 className="mx-auto text-[#46505e]" size={22} />
-                      <p className="mt-3 text-[11px] text-[#a3acb8]">
+                    <div className="rounded-lg border border-dashed border-[#d8d8d4] bg-white px-4 py-10 text-center">
+                      <Layers3 className="mx-auto text-[#888]" size={22} />
+                      <p className="mt-3 text-[11px] text-[#444]">
                         No fib layers yet
                       </p>
-                      <p className="mt-1 text-[9px] leading-4 text-[#596270]">
+                      <p className="mt-1 text-[9px] leading-4 text-[#888]">
                         Choose a timeframe, then add a buy or sell fib.
                       </p>
                     </div>
@@ -1188,9 +1041,9 @@ export function TradingWorkspace() {
                       <div
                         key={fib.id}
                         className={cn(
-                          "group rounded-lg border border-white/[0.06] bg-[#0d1015] px-2.5 py-2.5 transition hover:border-white/[0.1]",
+                          "group rounded-lg border border-[#e2e2de] bg-white px-3 py-3 transition hover:border-[#c9c9c4]",
                           fib.timeframe === workspace.timeframe &&
-                            "border-[#2ccdd0]/20 bg-[#0e1318]",
+                            "border-[#b8b8b2] shadow-sm",
                         )}
                       >
                         <div className="flex items-center gap-2">
@@ -1198,7 +1051,7 @@ export function TradingWorkspace() {
                             onClick={() =>
                               updateFib(fib.id, { visible: !fib.visible })
                             }
-                            className="text-[#687282] hover:text-white"
+                            className="text-[#73777c] hover:text-black"
                           >
                             {fib.visible ? (
                               <Eye size={13} />
@@ -1216,26 +1069,26 @@ export function TradingWorkspace() {
                               className={cn(
                                 "h-1.5 w-1.5 rounded-full",
                                 isBuy
-                                  ? "bg-[#39dca4] shadow-[0_0_6px_#39dca4]"
-                                  : "bg-[#ff5a75] shadow-[0_0_6px_#ff5a75]",
+                                  ? "bg-[#47bd78]"
+                                  : "bg-[#c95b64]",
                               )}
                               style={{ opacity: FIB_OPACITY[fib.timeframe] / 100 }}
                             />
-                            <span className="font-mono text-[10px] font-semibold text-[#d8dde3]">
+                            <span className="font-mono text-[10px] font-semibold text-[#222]">
                               {fib.timeframe.toUpperCase()}
                             </span>
                             <span
                               className={cn(
                                 "rounded px-1.5 py-0.5 font-mono text-[8px] font-semibold",
                                 isBuy
-                                  ? "bg-[#31d99e]/10 text-[#4be0ae]"
-                                  : "bg-[#ff526f]/10 text-[#ff7089]",
+                                  ? "bg-[#e9f6ed] text-[#28824e]"
+                                  : "bg-[#f7eaea] text-[#9a4149]",
                               )}
                             >
                               {fib.direction.toUpperCase()}
                             </span>
                             {fib.manual ? (
-                              <span className="font-mono text-[7px] uppercase text-[#687282]">
+                              <span className="font-mono text-[7px] uppercase text-[#999]">
                                 manual
                               </span>
                             ) : null}
@@ -1244,7 +1097,7 @@ export function TradingWorkspace() {
                             onClick={() =>
                               updateFib(fib.id, { locked: !fib.locked })
                             }
-                            className="text-[#5e6877] opacity-0 transition hover:text-white group-hover:opacity-100"
+                            className="text-[#777] opacity-0 transition hover:text-black group-hover:opacity-100"
                           >
                             {fib.locked ? (
                               <Lock size={12} />
@@ -1254,7 +1107,7 @@ export function TradingWorkspace() {
                           </button>
                           <button
                             onClick={() => refreshFib(fib)}
-                            className="text-[#5e6877] opacity-0 transition hover:text-white group-hover:opacity-100"
+                            className="text-[#777] opacity-0 transition hover:text-black group-hover:opacity-100"
                           >
                             <RefreshCw size={12} />
                           </button>
@@ -1267,12 +1120,12 @@ export function TradingWorkspace() {
                                 ),
                               }))
                             }
-                            className="text-[#5e6877] opacity-0 transition hover:text-[#ff7089] group-hover:opacity-100"
+                            className="text-[#777] opacity-0 transition hover:text-[#b9444d] group-hover:opacity-100"
                           >
                             <Trash2 size={12} />
                           </button>
                         </div>
-                        <div className="mt-2 flex items-center justify-between pl-5 font-mono text-[8px] text-[#5d6775]">
+                        <div className="mt-2 flex items-center justify-between pl-5 font-mono text-[8px] text-[#888]">
                           <span>1 {formatPrice(one, workspace.family)}</span>
                           <ChevronRight size={10} />
                           <span>0 {formatPrice(zero, workspace.family)}</span>
@@ -1284,15 +1137,15 @@ export function TradingWorkspace() {
                 </div>
               </div>
             ) : (
-              <div className="min-h-0 overflow-y-auto p-3">
-                <div className="rounded-lg border border-[#d9a441]/15 bg-[#d9a441]/[0.06] p-3">
-                  <div className="flex items-center gap-2 text-[#e1b55d]">
+              <div className="min-h-0 overflow-y-auto p-4">
+                <div className="rounded-lg border border-[#e3e3df] bg-white p-3">
+                  <div className="flex items-center gap-2 text-[#333]">
                     <ShieldCheck size={14} />
                     <span className="text-[10px] font-semibold">
                       PAPER EXECUTION
                     </span>
                   </div>
-                  <p className="mt-1.5 text-[9px] leading-4 text-[#8a806d]">
+                  <p className="mt-1.5 text-[9px] leading-4 text-[#888]">
                     TradersPost is not connected. Intents are validated
                     server-side and never leave Voltis.
                   </p>
@@ -1300,22 +1153,22 @@ export function TradingWorkspace() {
 
                 <div className="mt-4 flex items-center justify-between">
                   <div>
-                    <p className="text-[10px] font-medium text-[#dbe0e6]">
+                    <p className="text-[10px] font-medium text-[#222]">
                       Execution contract
                     </p>
-                    <p className="mt-0.5 font-mono text-[8px] text-[#5e6877]">
+                    <p className="mt-0.5 font-mono text-[8px] text-[#888]">
                       Analysis remains on {workspace.family}
                     </p>
                   </div>
-                  <div className="flex rounded-md border border-white/[0.08] bg-[#07090d] p-0.5">
+                  <div className="flex rounded-lg border border-[#e2e2de] bg-white p-1">
                     {(["mini", "micro"] as const).map((size) => (
                       <button
                         key={size}
                         onClick={() => patchWorkspace({ executionSize: size })}
                         className={cn(
-                          "rounded px-2.5 py-1.5 font-mono text-[9px] uppercase text-[#626c7b]",
+                          "rounded-md px-2.5 py-1.5 font-mono text-[9px] uppercase text-[#666]",
                           workspace.executionSize === size &&
-                            "bg-[#252c36] text-white",
+                            "bg-black text-white",
                         )}
                       >
                         {size}
@@ -1324,12 +1177,12 @@ export function TradingWorkspace() {
                   </div>
                 </div>
 
-                <div className="mt-4 rounded-lg border border-white/[0.07] bg-[#0d1015]">
-                  <div className="flex items-center justify-between border-b border-white/[0.06] px-3 py-2.5">
+                <div className="mt-4 rounded-lg border border-[#e2e2de] bg-white">
+                  <div className="flex items-center justify-between border-b border-[#e8e8e4] px-3 py-3">
                     <span className="font-mono text-xl font-semibold tracking-[-0.05em]">
                       {ticker}
                     </span>
-                    <span className="font-mono text-[10px] text-[#7d8795]">
+                    <span className="font-mono text-[10px] text-[#777]">
                       {lastBar
                         ? formatPrice(lastBar.close, workspace.family)
                         : "--"}
@@ -1366,16 +1219,16 @@ export function TradingWorkspace() {
                 </div>
 
                 <div className="mt-4">
-                  <p className="mb-2 font-mono text-[8px] uppercase tracking-[0.14em] text-[#596270]">
+                  <p className="mb-2 font-mono text-[8px] uppercase tracking-[0.14em] text-[#777]">
                     Selected accounts
                   </p>
                   <div className="space-y-1.5">
                     {["Apex 50K", "Take Profit 50K"].map((account) => (
                       <label
                         key={account}
-                        className="flex cursor-pointer items-center justify-between rounded-md border border-white/[0.06] bg-[#0d1015] px-3 py-2.5"
+                        className="flex cursor-pointer items-center justify-between rounded-lg border border-[#e2e2de] bg-white px-3 py-2.5"
                       >
-                        <span className="text-[10px] text-[#aeb6c1]">
+                        <span className="text-[10px] text-[#444]">
                           {account}
                         </span>
                         <input
@@ -1388,7 +1241,7 @@ export function TradingWorkspace() {
                                 : [...current, account],
                             )
                           }
-                          className="accent-[#26c9cc]"
+                          className="accent-[#47bd78]"
                         />
                       </label>
                     ))}
@@ -1400,10 +1253,10 @@ export function TradingWorkspace() {
                     setArmed((current) => !current)
                   }
                   className={cn(
-                    "mt-4 flex h-10 w-full items-center justify-center gap-2 rounded-md border font-mono text-[9px] font-semibold uppercase tracking-[0.12em] transition",
+                    "mt-4 flex h-10 w-full items-center justify-center gap-2 rounded-lg border font-mono text-[9px] font-semibold uppercase tracking-[0.12em] transition",
                     armed
-                      ? "border-[#ffb34d]/30 bg-[#ffb34d]/10 text-[#ffc36f]"
-                      : "border-white/[0.08] bg-[#11151b] text-[#7a8492] hover:text-white",
+                      ? "border-black bg-black text-white"
+                      : "border-[#dcdcd8] bg-white text-[#555] hover:border-black",
                   )}
                 >
                   {armed ? <Unlock size={14} /> : <Lock size={14} />}
@@ -1414,14 +1267,14 @@ export function TradingWorkspace() {
                   <button
                     disabled={!armed || submitting || selectedAccounts.length === 0}
                     onClick={() => submitPaperOrder("sell")}
-                    className="h-12 rounded-md bg-[#d83d59] text-[11px] font-semibold text-white transition hover:bg-[#e14765] disabled:cursor-not-allowed disabled:opacity-35"
+                    className="h-16 rounded-lg border border-[#e2e2de] bg-[#f2f2ef] text-[11px] font-semibold text-[#777] transition hover:bg-[#e9e9e5] disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     SELL MARKET
                   </button>
                   <button
                     disabled={!armed || submitting || selectedAccounts.length === 0}
                     onClick={() => submitPaperOrder("buy")}
-                    className="h-12 rounded-md bg-[#13a97b] text-[11px] font-semibold text-white transition hover:bg-[#18b887] disabled:cursor-not-allowed disabled:opacity-35"
+                    className="h-16 rounded-lg bg-[#47bd78] text-[11px] font-semibold text-white transition hover:bg-[#3cad6c] disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     BUY MARKET
                   </button>
@@ -1430,20 +1283,20 @@ export function TradingWorkspace() {
                 <div className="mt-2 grid grid-cols-2 gap-2">
                   <button
                     disabled
-                    className="h-8 rounded border border-white/[0.07] bg-[#0d1015] font-mono text-[8px] text-[#596270]"
+                    className="h-8 rounded-lg border border-[#e2e2de] bg-white font-mono text-[8px] text-[#999]"
                   >
                     CANCEL ALL
                   </button>
                   <button
                     disabled
-                    className="h-8 rounded border border-white/[0.07] bg-[#0d1015] font-mono text-[8px] text-[#596270]"
+                    className="h-8 rounded-lg border border-[#e2e2de] bg-white font-mono text-[8px] text-[#999]"
                   >
                     FLATTEN
                   </button>
                 </div>
 
                 {paperMessage ? (
-                  <div className="mt-3 rounded-md border border-[#31d99e]/15 bg-[#31d99e]/[0.06] px-3 py-2.5 text-[9px] leading-4 text-[#75d9b5]">
+                  <div className="mt-3 rounded-lg border border-[#d5eadc] bg-[#eef8f1] px-3 py-2.5 text-[9px] leading-4 text-[#277b49]">
                     {paperMessage}
                   </div>
                 ) : null}
@@ -1473,21 +1326,21 @@ function NumberControl({
 }) {
   return (
     <div className="flex items-center justify-between">
-      <span className="text-[10px] text-[#7c8694]">{label}</span>
-      <div className="flex items-center overflow-hidden rounded border border-white/[0.08] bg-[#07090d]">
+      <span className="text-[10px] text-[#555]">{label}</span>
+      <div className="flex items-center overflow-hidden rounded-lg border border-[#e2e2de] bg-[#fafaf8]">
         <button
           onClick={() => onChange(Math.max(min, value - step))}
-          className="flex h-7 w-7 items-center justify-center text-[#687282] hover:bg-white/[0.05] hover:text-white"
+          className="flex h-8 w-8 items-center justify-center text-[#555] hover:bg-[#ecece8]"
         >
           -
         </button>
-        <span className="min-w-12 px-1 text-center font-mono text-[9px] tabular-nums text-[#d7dce2]">
+        <span className="min-w-14 px-1 text-center font-mono text-[9px] tabular-nums text-[#222]">
           {value}
-          {suffix ? <span className="ml-1 text-[#596270]">{suffix}</span> : null}
+          {suffix ? <span className="ml-1 text-[#888]">{suffix}</span> : null}
         </span>
         <button
           onClick={() => onChange(value + step)}
-          className="flex h-7 w-7 items-center justify-center text-[#687282] hover:bg-white/[0.05] hover:text-white"
+          className="flex h-8 w-8 items-center justify-center text-[#555] hover:bg-[#ecece8]"
         >
           +
         </button>

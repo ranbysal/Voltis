@@ -52,15 +52,15 @@ const TIMEFRAME_STYLE: Record<
   Timeframe,
   { buy: string; sell: string; opacity: number }
 > = {
-  "5m": { buy: "#42f5a7", sell: "#ff4d68", opacity: 1 },
-  "10m": { buy: "#35eeb3", sell: "#ff5775", opacity: 0.94 },
-  "30m": { buy: "#27dfbf", sell: "#f7617e", opacity: 0.88 },
-  "1h": { buy: "#25cfbd", sell: "#ec6684", opacity: 0.8 },
-  "4h": { buy: "#29bdae", sell: "#dd6d88", opacity: 0.72 },
-  "1d": { buy: "#32a99f", sell: "#c87388", opacity: 0.6 },
-  "3d": { buy: "#3e958e", sell: "#b67888", opacity: 0.5 },
-  "1w": { buy: "#4f807c", sell: "#9f7c87", opacity: 0.4 },
-  "1M": { buy: "#5e6f6d", sell: "#887d84", opacity: 0.32 },
+  "5m": { buy: "#22a75a", sell: "#d04b56", opacity: 1 },
+  "10m": { buy: "#2faf65", sell: "#d65e67", opacity: 0.94 },
+  "30m": { buy: "#3bb56f", sell: "#d96f77", opacity: 0.88 },
+  "1h": { buy: "#49b879", sell: "#d77d83", opacity: 0.8 },
+  "4h": { buy: "#58b982", sell: "#ce8b90", opacity: 0.72 },
+  "1d": { buy: "#69b98b", sell: "#c49a9d", opacity: 0.6 },
+  "3d": { buy: "#7bb995", sell: "#b8a5a7", opacity: 0.5 },
+  "1w": { buy: "#8bb69d", sell: "#aaacad", opacity: 0.4 },
+  "1M": { buy: "#9bb2a5", sell: "#a2a2a2", opacity: 0.32 },
 };
 
 function numericTime(time: Time | null): number | null {
@@ -138,23 +138,23 @@ export function MarketChart({
     const chart = createChart(container, {
       autoSize: true,
       layout: {
-        background: { type: ColorType.Solid, color: "#07090d" },
-        textColor: "#768091",
+        background: { type: ColorType.Solid, color: "#fbfbfa" },
+        textColor: "#54585d",
         fontFamily: '"Geist Mono", ui-monospace, monospace',
-        fontSize: 11,
+        fontSize: 10,
         attributionLogo: false,
       },
       grid: {
-        vertLines: { color: "rgba(35, 42, 53, 0.48)" },
-        horzLines: { color: "rgba(35, 42, 53, 0.48)" },
+        vertLines: { color: "#eeeeeb" },
+        horzLines: { color: "#eeeeeb" },
       },
       rightPriceScale: {
-        borderColor: "#202630",
+        borderColor: "#e1e1dd",
         scaleMargins: { top: 0.08, bottom: 0.08 },
         minimumWidth: 76,
       },
       timeScale: {
-        borderColor: "#202630",
+        borderColor: "#e1e1dd",
         timeVisible: true,
         secondsVisible: false,
         rightOffset: 8,
@@ -164,16 +164,16 @@ export function MarketChart({
       crosshair: {
         mode: CrosshairMode.Normal,
         vertLine: {
-          color: "rgba(131, 143, 160, 0.55)",
+          color: "rgba(31, 34, 38, 0.38)",
           width: 1,
           style: LineStyle.Dashed,
-          labelBackgroundColor: "#222a35",
+          labelBackgroundColor: "#111111",
         },
         horzLine: {
-          color: "rgba(131, 143, 160, 0.55)",
+          color: "rgba(31, 34, 38, 0.38)",
           width: 1,
           style: LineStyle.Dashed,
-          labelBackgroundColor: "#222a35",
+          labelBackgroundColor: "#111111",
         },
       },
       handleScale: {
@@ -190,12 +190,12 @@ export function MarketChart({
     });
 
     const series = chart.addSeries(CandlestickSeries, {
-      upColor: "#22c7c9",
-      downColor: "#f04468",
+      upColor: "#47bd78",
+      downColor: "#151515",
       borderVisible: false,
-      wickUpColor: "#22c7c9",
-      wickDownColor: "#f04468",
-      priceLineColor: "#20c8cb",
+      wickUpColor: "#47bd78",
+      wickDownColor: "#151515",
+      priceLineColor: "#151515",
       priceLineWidth: 1,
       lastValueVisible: true,
       priceFormat: {
@@ -296,7 +296,7 @@ export function MarketChart({
   }
 
   return (
-    <div className="relative h-full min-h-[420px] overflow-hidden bg-[#07090d]">
+    <div className="relative h-full min-h-[420px] overflow-hidden bg-[#fbfbfa]">
       <div ref={containerRef} className="absolute inset-0" />
 
       <svg
@@ -338,7 +338,7 @@ export function MarketChart({
                     fontSize={10}
                     fontWeight={600}
                     paintOrder="stroke"
-                    stroke="#07090d"
+                    stroke="#fbfbfa"
                     strokeWidth={4}
                   >
                     {fib.timeframe.toUpperCase()} {fib.direction.toUpperCase()}{" "}
@@ -376,7 +376,7 @@ export function MarketChart({
                       cx={anchor.x}
                       cy={anchor.y}
                       r={6}
-                      fill="#07090d"
+                      fill="#ffffff"
                       stroke={color}
                       strokeWidth={2}
                       onPointerDown={(event) => {
@@ -399,8 +399,8 @@ export function MarketChart({
         )}
       </svg>
 
-      <div className="pointer-events-none absolute bottom-3 left-3 z-20 flex items-center gap-2 rounded-md border border-white/[0.06] bg-[#0b0e13]/90 px-2.5 py-1.5 font-mono text-[10px] text-[#788293] shadow-xl backdrop-blur">
-        <span className="h-1.5 w-1.5 rounded-full bg-[#36d399] shadow-[0_0_8px_#36d399]" />
+      <div className="pointer-events-none absolute bottom-3 left-3 z-20 flex items-center gap-2 rounded-md border border-[#e2e2de] bg-white/92 px-2.5 py-1.5 font-mono text-[9px] text-[#6d7277] shadow-sm backdrop-blur">
+        <span className="h-1.5 w-1.5 rounded-full bg-[#47bd78]" />
         {dataLabel}
       </div>
     </div>

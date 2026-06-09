@@ -23,7 +23,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${GeistSans.variable} ${GeistMono.variable} dark`}
+      className={`${GeistSans.variable} ${GeistMono.variable}`}
     >
       <body>{children}</body>
     </html>
