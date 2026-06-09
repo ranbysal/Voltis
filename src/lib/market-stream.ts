@@ -21,7 +21,7 @@ function sign(value: string) {
 
 export function isMarketStreamConfigured() {
   return Boolean(
-    process.env.NEXT_PUBLIC_MARKET_GATEWAY_URL && sign("configuration-check"),
+    process.env.MARKET_GATEWAY_URL && sign("configuration-check"),
   );
 }
 

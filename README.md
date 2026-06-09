@@ -1,31 +1,43 @@
 # Voltis
 
-Voltis is a private, desktop-first CME futures workspace for Dow and Nasdaq
-analysis. It combines a fast candlestick chart with persistent, color-coded
-multi-timeframe Fibonacci drawings and a gated execution boundary for a future
-TradersPost integration.
+Voltis is Yazan's private CME futures workspace for Dow and Nasdaq analysis.
+It combines a fast dark chart, persistent multi-timeframe Fibonacci layers,
+and a deliberately gated execution panel for funded-account workflows.
 
-## Current release
+## Implemented workspace
 
-- YM and NQ analytical families with mini/micro execution sizing
-- 5m, 10m, 30m, 1h, 4h, 1d, 3d, 1w, and 1M chart views
+- YM and NQ continuous analytical charts with YM/MYM and NQ/MNQ sizing
+- 5m, 10m, 30m, 1h, 4h, 1d, 3d, 1w, and 1M ETH-session views
 - Buy and sell fibs at 0, 0.382, 0.786, and 1
-- One buy and one sell fib per family/timeframe
-- Cross-timeframe overlays with age-based opacity
-- Draggable active anchors that lock as manual drawings
-- Per-layer visibility, lock, refresh, and delete controls
-- Local persistence plus optional Neon workspace synchronization
-- Armed paper execution with account selection and bracket inputs
-- Typed, server-side execution endpoint with live routing intentionally gated
-- Compact-screen protection that disables the trading workspace below 1024px
+- Auto anchors using deviation 20 and depth 50, plus draggable manual anchors
+- One buy and one sell layer per family/timeframe
+- Cross-timeframe overlays with direction colors and timeframe opacity
+- Layer visibility, lock, refresh, delete, local persistence, and optional Neon
+- Password-protected single-user access and authenticated server routes
+- Desktop trading workspace plus a compact read-only chart experience
+- Armed paper orders with account selection, mini/micro sizing, and brackets
 
-The bundled market feed is deterministic demo data. `DATABENTO_API_KEY` is
-reserved for the dedicated market gateway phase; the key is never exposed to
-the browser.
+Live TradersPost routing remains intentionally disabled until Yazan's
+subscriptions, prop-firm permissions, account identifiers, and test behavior
+are verified.
+
+## Market data
+
+Voltis supports three progressively stronger data modes:
+
+1. With no credentials, deterministic demo bars keep the complete UI usable.
+2. `DATABENTO_API_KEY` enables authenticated Databento historical requests,
+   continuous symbol mapping, ETH aggregation, and additive back adjustment.
+3. The Python gateway in `services/market-gateway` subscribes to finalized
+   Databento `ohlcv-1m` bars and streams them to the browser over an
+   authenticated websocket. The Databento key never reaches the browser.
+
+The app falls back to 30-second historical refreshes if the live gateway
+disconnects.
 
 ## Development
 
-```bash
+```powershell
 pnpm install
 pnpm dev
 ```
@@ -34,7 +46,7 @@ Open `http://127.0.0.1:3000`.
 
 Quality checks:
 
-```bash
+```powershell
 pnpm test
 pnpm lint
 pnpm build
@@ -46,31 +58,37 @@ Copy `.env.example` to `.env.local`.
 
 ```env
 DATABENTO_API_KEY=
-DATABASE_URL=
+VOLTIS_ACCESS_PASSWORD=
+VOLTIS_SESSION_SECRET=
 VOLTIS_USER_ID=yazan
+MARKET_GATEWAY_URL=
+MARKET_GATEWAY_SECRET=
+DATABASE_URL=
 TRADERSPOST_WEBHOOK_URL=
 TRADING_MODE=paper
 ```
 
-When `DATABASE_URL` is absent, drawings persist in browser storage. When it is
-present, `/api/workspace` synchronizes the same state to Neon.
+`VOLTIS_SESSION_SECRET` and `MARKET_GATEWAY_SECRET` must each be at least 32
+characters. Use `wss://` for `MARKET_GATEWAY_URL` in production.
 
-Generate and apply the database migration after configuring Neon:
+When `DATABASE_URL` is absent, workspace state persists in browser storage.
+When present, `/api/workspace` synchronizes the same state to Neon.
 
-```bash
+```powershell
 pnpm db:generate
 pnpm db:migrate
 ```
 
+See `services/market-gateway/README.md` for gateway setup.
+
 ## Architecture
 
-- `src/components/trading-workspace.tsx`: product shell and interactions
-- `src/components/market-chart.tsx`: Lightweight Charts and fib overlay layer
-- `src/lib/market.ts`: deterministic feed, interval definitions, anchor engine
-- `src/lib/execution.ts`: replaceable execution provider boundary
-- `src/app/api`: market, workspace, and execution server endpoints
-- `src/db/schema.ts`: Neon/Drizzle workspace schema
-
-Live TradersPost routing remains disabled until the account subscriptions,
-prop-firm permissions, contract mapping, and test-mode behavior are verified.
-
+- `src/components/trading-workspace.tsx`: responsive product shell
+- `src/components/market-chart.tsx`: Lightweight Charts and SVG fib layer
+- `src/lib/market.ts`: fixture feed and automatic anchor engine
+- `src/lib/market-data.ts`: Databento history and back adjustment
+- `src/lib/market-aggregation.ts`: CME ETH timeframe aggregation
+- `src/lib/market-stream.ts`: short-lived websocket authorization
+- `src/lib/execution.ts`: replaceable paper/live execution boundary
+- `src/app/api`: authenticated market, workspace, auth, and execution routes
+- `services/market-gateway`: deployable Databento live websocket service

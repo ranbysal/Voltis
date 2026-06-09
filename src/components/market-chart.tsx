@@ -32,6 +32,7 @@ type MarketChartProps = {
   timeframe: Timeframe;
   fibs: FibDrawing[];
   dataLabel: string;
+  readOnly?: boolean;
   onUpdateFib: (id: string, patch: Partial<FibDrawing>) => void;
 };
 
@@ -119,6 +120,7 @@ export function MarketChart({
   timeframe,
   fibs,
   dataLabel,
+  readOnly = false,
   onUpdateFib,
 }: MarketChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -349,6 +351,7 @@ export function MarketChart({
               ))}
 
               {isActive &&
+              !readOnly &&
               startX !== null &&
               endX !== null &&
               startY !== null &&

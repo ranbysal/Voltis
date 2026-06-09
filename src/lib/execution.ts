@@ -18,7 +18,7 @@ export class PaperExecutionProvider implements ExecutionProvider {
     return {
       accepted: true,
       mode: "paper",
-      message: `${intent.action.toUpperCase()} ${intent.quantity} ${intent.ticker} recorded in paper mode`,
+      message: `${intent.action.toUpperCase()} ${intent.quantity} ${intent.ticker} validated in paper mode`,
     };
   }
 }

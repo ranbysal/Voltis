@@ -12,7 +12,7 @@ afterEach(() => {
 describe("market stream authentication", () => {
   it("creates short-lived gateway tokens", () => {
     vi.stubEnv("MARKET_GATEWAY_SECRET", "g".repeat(48));
-    vi.stubEnv("NEXT_PUBLIC_MARKET_GATEWAY_URL", "ws://127.0.0.1:8000/ws");
+    vi.stubEnv("MARKET_GATEWAY_URL", "ws://127.0.0.1:8000/ws");
 
     const token = createMarketStreamToken("yazan");
     expect(token).not.toBeNull();

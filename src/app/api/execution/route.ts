@@ -36,7 +36,7 @@ export async function POST(request: Request) {
     return Response.json({
       accepted: true,
       mode: "paper",
-      message: `${intent.data.action.toUpperCase()} ${intent.data.quantity} ${intent.data.ticker} recorded in paper mode`,
+      message: `${intent.data.action.toUpperCase()} ${intent.data.quantity} ${intent.data.ticker} validated in paper mode`,
       intent: intent.data,
     });
   }

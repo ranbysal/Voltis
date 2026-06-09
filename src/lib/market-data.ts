@@ -46,7 +46,7 @@ const CONTINUOUS_SYMBOL: Record<SymbolFamily, string> = {
   NQ: "NQ.v.0",
 };
 
-function historyRequest(timeframe: Timeframe, count: number) {
+export function historyRequest(timeframe: Timeframe, count: number) {
   const now = new Date();
   const source:
     | "ohlcv-1m"
@@ -54,9 +54,7 @@ function historyRequest(timeframe: Timeframe, count: number) {
     | "ohlcv-1d" =
     ["5m", "10m", "30m"].includes(timeframe)
       ? "ohlcv-1m"
-      : ["1h", "4h", "1d", "3d"].includes(timeframe)
-        ? "ohlcv-1h"
-        : "ohlcv-1d";
+      : "ohlcv-1h";
   const daysPerBar: Record<Timeframe, number> = {
     "5m": 5 / 1_440,
     "10m": 10 / 1_440,
@@ -69,7 +67,7 @@ function historyRequest(timeframe: Timeframe, count: number) {
     "1M": 31,
   };
   const calendarBuffer =
-    timeframe === "1M" ? 1.55 : timeframe === "1w" ? 1.5 : 1.35;
+    timeframe === "1M" || timeframe === "1w" ? 1.15 : 1.35;
   const lookbackDays = Math.max(
     7,
     Math.ceil(daysPerBar[timeframe] * count * calendarBuffer),
@@ -245,4 +243,3 @@ export function getMarketDataProvider(): MarketDataProvider {
     ? new DatabentoHistoricalProvider(process.env.DATABENTO_API_KEY)
     : new DemoMarketDataProvider();
 }
-

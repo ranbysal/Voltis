@@ -26,6 +26,6 @@ export async function POST() {
 
   return Response.json({
     token,
-    url: process.env.NEXT_PUBLIC_MARKET_GATEWAY_URL,
+    url: process.env.MARKET_GATEWAY_URL,
   });
 }

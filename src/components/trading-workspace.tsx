@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Activity,
   Bell,
   ChevronDown,
   ChevronRight,
@@ -41,12 +40,14 @@ import {
   fibPrice,
   type FibDirection,
   type FibDrawing,
+  type MarketBar,
   type SymbolFamily,
   type Timeframe,
   type WorkspaceState,
 } from "@/lib/domain";
 import { ApiExecutionProvider } from "@/lib/execution";
 import type { MarketDataMeta } from "@/lib/market-data";
+import { applyLiveBar } from "@/lib/market-aggregation";
 import {
   detectFibAnchors,
   generateMarketBars,
@@ -63,6 +64,31 @@ import { cn } from "@/lib/utils";
 import { MarketChart } from "@/components/market-chart";
 
 const provider = new ApiExecutionProvider();
+type MarketStreamStatus =
+  | "unavailable"
+  | "connecting"
+  | "live"
+  | "reconnecting";
+type MarketStreamMessage =
+  | {
+      type: "bar";
+      family: SymbolFamily;
+      activeContract: string;
+      bar: MarketBar;
+    }
+  | {
+      type: "mapping";
+      family: SymbolFamily;
+      activeContract: string;
+    }
+  | {
+      type: "status";
+      state: "connected" | "reconnecting";
+    }
+  | {
+      type: "heartbeat";
+    };
+
 const DEFAULT_MARKET_META: MarketDataMeta = {
   provider: "demo",
   session: "ETH",
@@ -75,17 +101,15 @@ const DEFAULT_MARKET_META: MarketDataMeta = {
 
 const FAMILY_DETAILS: Record<
   SymbolFamily,
-  { name: string; exchange: string; change: number }
+  { name: string; exchange: string }
 > = {
   YM: {
     name: "E-mini Dow Jones Futures",
     exchange: "CBOT",
-    change: 0.18,
   },
   NQ: {
     name: "E-mini Nasdaq-100 Futures",
     exchange: "CME",
-    change: 0.31,
   },
 };
 
@@ -152,6 +176,9 @@ export function TradingWorkspace() {
   const [marketMeta, setMarketMeta] =
     useState<MarketDataMeta>(DEFAULT_MARKET_META);
   const [marketLoading, setMarketLoading] = useState(false);
+  const [marketStreamStatus, setMarketStreamStatus] =
+    useState<MarketStreamStatus>("connecting");
+  const [compactViewport, setCompactViewport] = useState(false);
   const [armed, setArmed] = useState(false);
   const [paperMessage, setPaperMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -162,6 +189,11 @@ export function TradingWorkspace() {
   ]);
   const clockRef = useRef<HTMLSpanElement>(null);
   const historyRequestRef = useRef(0);
+  const activeContractRef = useRef(DEFAULT_MARKET_META.activeContract);
+  const selectionRef = useRef({
+    family: DEFAULT_WORKSPACE.family,
+    timeframe: DEFAULT_WORKSPACE.timeframe,
+  });
 
   const loadMarketHistory = useCallback(
     async (family: SymbolFamily, timeframe: Timeframe) => {
@@ -184,6 +216,7 @@ export function TradingWorkspace() {
           return;
         }
         setBars(history.bars);
+        activeContractRef.current = history.activeContract;
         setMarketMeta({
           provider: history.provider,
           session: history.session,
@@ -198,6 +231,7 @@ export function TradingWorkspace() {
           return;
         }
         setBars(generateMarketBars(family, timeframe));
+        activeContractRef.current = `${family}M6`;
         setMarketMeta({
           ...DEFAULT_MARKET_META,
           continuousSymbol: `${family}.v.0`,
@@ -233,6 +267,14 @@ export function TradingWorkspace() {
   }, [loadMarketHistory]);
 
   useEffect(() => {
+    const query = window.matchMedia("(max-width: 1023px)");
+    const update = () => setCompactViewport(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+
+  useEffect(() => {
     if (hydrated) {
       saveWorkspace(workspace);
     }
@@ -243,6 +285,157 @@ export function TradingWorkspace() {
     }, 600);
     return () => window.clearTimeout(cloudSave);
   }, [hydrated, workspace]);
+
+  useEffect(() => {
+    selectionRef.current = {
+      family: workspace.family,
+      timeframe: workspace.timeframe,
+    };
+  }, [workspace.family, workspace.timeframe]);
+
+  useEffect(() => {
+    if (!hydrated) {
+      return;
+    }
+
+    let disposed = false;
+    let socket: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+    let reconnectAttempt = 0;
+    const seenBars = new Set<string>();
+
+    async function connect() {
+      if (disposed) {
+        return;
+      }
+
+      setMarketStreamStatus(
+        reconnectAttempt === 0 ? "connecting" : "reconnecting",
+      );
+
+      try {
+        const response = await fetch("/api/market/stream-token", {
+          method: "POST",
+        });
+        if (response.status === 503) {
+          setMarketStreamStatus("unavailable");
+          return;
+        }
+        if (!response.ok) {
+          throw new Error("Unable to authorize live market stream");
+        }
+
+        const body = (await response.json()) as {
+          token: string;
+          url: string;
+        };
+        const url = new URL(body.url);
+        url.searchParams.set("token", body.token);
+        socket = new WebSocket(url);
+
+        socket.onopen = () => {
+          reconnectAttempt = 0;
+          setMarketStreamStatus("live");
+        };
+        socket.onmessage = (event) => {
+          let message: MarketStreamMessage;
+          try {
+            message = JSON.parse(String(event.data)) as MarketStreamMessage;
+          } catch {
+            return;
+          }
+
+          if (message.type === "status") {
+            setMarketStreamStatus(
+              message.state === "connected" ? "live" : "reconnecting",
+            );
+            return;
+          }
+          if (message.type === "heartbeat") {
+            return;
+          }
+
+          if (message.family !== selectionRef.current.family) {
+            return;
+          }
+
+          const contractChanged =
+            message.activeContract !== activeContractRef.current;
+          activeContractRef.current = message.activeContract;
+          setMarketMeta((current) => ({
+            ...current,
+            provider: "databento",
+            delayed: false,
+            sourceSchema: "ohlcv-1m",
+            continuousSymbol: `${message.family}.v.0`,
+            activeContract: message.activeContract,
+          }));
+
+          if (message.type === "mapping" && contractChanged) {
+            void loadMarketHistory(
+              selectionRef.current.family,
+              selectionRef.current.timeframe,
+            );
+            return;
+          }
+
+          if (message.type === "bar") {
+            const key = `${message.family}:${message.bar.time}`;
+            if (seenBars.has(key)) {
+              return;
+            }
+            seenBars.add(key);
+            if (seenBars.size > 2_000) {
+              const first = seenBars.values().next().value;
+              if (first) {
+                seenBars.delete(first);
+              }
+            }
+            setBars((current) =>
+              applyLiveBar(
+                current,
+                message.bar,
+                selectionRef.current.timeframe,
+              ),
+            );
+          }
+        };
+        socket.onerror = () => {
+          socket?.close();
+        };
+        socket.onclose = () => {
+          if (disposed) {
+            return;
+          }
+          reconnectAttempt += 1;
+          setMarketStreamStatus("reconnecting");
+          reconnectTimer = window.setTimeout(
+            () => void connect(),
+            Math.min(30_000, 1_000 * 2 ** Math.min(reconnectAttempt, 5)),
+          );
+        };
+      } catch {
+        if (disposed) {
+          return;
+        }
+        reconnectAttempt += 1;
+        setMarketStreamStatus("reconnecting");
+        reconnectTimer = window.setTimeout(
+          () => void connect(),
+          Math.min(30_000, 1_000 * 2 ** Math.min(reconnectAttempt, 5)),
+        );
+      }
+    }
+
+    void connect();
+    return () => {
+      disposed = true;
+      socket?.close();
+      if (reconnectTimer !== null) {
+        window.clearTimeout(reconnectTimer);
+      }
+    };
+  }, [hydrated, loadMarketHistory]);
 
   useEffect(() => {
     if (marketMeta.provider !== "demo") {
@@ -259,7 +452,11 @@ export function TradingWorkspace() {
   }, [marketMeta.provider, workspace.family]);
 
   useEffect(() => {
-    if (!hydrated || marketMeta.provider !== "databento") {
+    if (
+      !hydrated ||
+      marketMeta.provider !== "databento" ||
+      marketStreamStatus === "live"
+    ) {
       return;
     }
     const interval = window.setInterval(() => {
@@ -270,6 +467,7 @@ export function TradingWorkspace() {
     hydrated,
     loadMarketHistory,
     marketMeta.provider,
+    marketStreamStatus,
     workspace.family,
     workspace.timeframe,
   ]);
@@ -498,23 +696,177 @@ export function TradingWorkspace() {
     window.location.reload();
   }
 
+  const dataLabel =
+    marketMeta.provider === "databento"
+      ? `DATABENTO ${marketMeta.delayed ? "HISTORICAL" : "LIVE"}`
+      : marketStreamStatus === "unavailable"
+        ? "DETERMINISTIC DEMO FEED"
+        : "CONNECTING LIVE DATA";
+
+  if (compactViewport) {
+    return (
+      <main className="min-h-dvh bg-[#050609] text-[#f3f5f7]">
+        <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-white/[0.07] bg-[#080a0e]/95 px-4 backdrop-blur">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#20c6c9] text-[#041011]">
+              <Zap size={16} strokeWidth={2.8} />
+            </div>
+            <div>
+              <p className="text-sm font-semibold tracking-[-0.03em]">VOLTIS</p>
+              <p className="font-mono text-[8px] uppercase tracking-[0.14em] text-[#687282]">
+                Read-only workspace
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5 font-mono text-[8px] text-[#7e8998]">
+              <span
+                className={cn(
+                  "h-1.5 w-1.5 rounded-full",
+                  marketStreamStatus === "live"
+                    ? "bg-[#36d399] shadow-[0_0_8px_#36d399]"
+                    : marketStreamStatus === "reconnecting" ||
+                        marketStreamStatus === "connecting"
+                      ? "animate-pulse bg-[#e0ad54]"
+                      : "bg-[#697384]",
+                )}
+              />
+              {marketStreamStatus === "live" ? "LIVE" : "VIEW"}
+            </div>
+            <button
+              title="Sign out"
+              onClick={signOut}
+              className="flex h-8 w-8 items-center justify-center rounded-md text-[#788293] hover:bg-white/[0.05] hover:text-white"
+            >
+              <CircleUserRound size={16} />
+            </button>
+          </div>
+        </header>
+
+        <section className="border-b border-white/[0.07] bg-[#080a0e] px-4 py-3">
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-sm font-semibold">
+                  {workspace.family}1!
+                </span>
+                <span className="rounded bg-[#151a21] px-1.5 py-0.5 font-mono text-[8px] text-[#6f7988]">
+                  {FAMILY_DETAILS[workspace.family].exchange}
+                </span>
+              </div>
+              <p className="mt-1 truncate text-[10px] text-[#687282]">
+                {FAMILY_DETAILS[workspace.family].name}
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="font-mono text-lg font-medium tabular-nums">
+                {lastBar ? formatPrice(lastBar.close, workspace.family) : "--"}
+              </p>
+              <p
+                className={cn(
+                  "font-mono text-[9px]",
+                  sessionMove >= 0 ? "text-[#3bd9a0]" : "text-[#ff5976]",
+                )}
+              >
+                {sessionMove >= 0 ? "+" : ""}
+                {sessionMove.toFixed(2)}%
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-3 flex items-center gap-2">
+            {(["YM", "NQ"] as const).map((family) => (
+              <button
+                key={family}
+                onClick={() => selectFamily(family)}
+                className={cn(
+                  "h-8 flex-1 rounded-md border border-white/[0.07] font-mono text-[10px] font-semibold text-[#697384]",
+                  workspace.family === family &&
+                    "border-[#2ccdd0]/20 bg-[#20c6c9]/10 text-[#55dfe1]",
+                )}
+              >
+                {family}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <div className="overflow-x-auto border-b border-white/[0.07] bg-[#080a0e] px-3 py-2">
+          <div className="flex min-w-max gap-1">
+            {TIMEFRAMES.map((item) => (
+              <button
+                key={item}
+                onClick={() => selectTimeframe(item)}
+                className={cn(
+                  "h-8 rounded px-3 font-mono text-[10px] font-semibold text-[#6e7887]",
+                  workspace.timeframe === item &&
+                    "bg-[#252c36] text-white",
+                )}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="h-[58dvh] min-h-[420px] border-b border-white/[0.07]">
+          <MarketChart
+            bars={bars}
+            family={workspace.family}
+            timeframe={workspace.timeframe}
+            fibs={visibleFibs}
+            dataLabel={dataLabel}
+            readOnly
+            onUpdateFib={updateFib}
+          />
+        </div>
+
+        <section className="px-4 py-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-[11px] font-medium">Fib layers</p>
+              <p className="mt-0.5 text-[9px] text-[#626c7b]">
+                Visibility only. Editing and trading require desktop.
+              </p>
+            </div>
+            <span className="font-mono text-[9px] text-[#596270]">
+              {marketMeta.activeContract} / ETH
+            </span>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            {familyFibs.map((fib) => (
+              <button
+                key={fib.id}
+                onClick={() => updateFib(fib.id, { visible: !fib.visible })}
+                className={cn(
+                  "flex items-center justify-between rounded-lg border border-white/[0.07] bg-[#0d1015] px-3 py-3 text-left",
+                  !fib.visible && "opacity-45",
+                )}
+              >
+                <span className="flex items-center gap-2">
+                  <span
+                    className={cn(
+                      "h-1.5 w-1.5 rounded-full",
+                      fib.direction === "buy"
+                        ? "bg-[#39dca4]"
+                        : "bg-[#ff5a75]",
+                    )}
+                  />
+                  <span className="font-mono text-[10px] font-semibold">
+                    {fib.timeframe.toUpperCase()} {fib.direction.toUpperCase()}
+                  </span>
+                </span>
+                {fib.visible ? <Eye size={13} /> : <EyeOff size={13} />}
+              </button>
+            ))}
+          </div>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-dvh bg-[#050609] text-[#f3f5f7]">
-      <div className="hidden min-h-dvh items-center justify-center p-8 text-center max-lg:flex">
-        <div className="max-w-md rounded-2xl border border-white/10 bg-[#0a0d12] p-8 shadow-2xl">
-          <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-[#18c7ca]/10 text-[#35d7d9]">
-            <Activity size={24} />
-          </div>
-          <h1 className="text-xl font-semibold tracking-tight">
-            Voltis is desktop-first
-          </h1>
-          <p className="mt-2 text-sm leading-6 text-[#858e9d]">
-            Open the trading workspace on a display at least 1024 pixels wide.
-            Mobile order entry stays disabled by design.
-          </p>
-        </div>
-      </div>
-
       <div className="hidden min-h-dvh grid-rows-[52px_minmax(0,1fr)] lg:grid">
         <header className="flex items-center border-b border-white/[0.07] bg-[#080a0e] px-3">
           <div className="flex w-[178px] items-center gap-2.5 border-r border-white/[0.07]">
@@ -538,12 +890,24 @@ export function TradingWorkspace() {
               <span
                 className={cn(
                   "h-1.5 w-1.5 rounded-full",
-                  marketLoading
+                  marketLoading || marketStreamStatus === "connecting"
                     ? "animate-pulse bg-[#e0ad54]"
+                    : marketStreamStatus === "reconnecting"
+                      ? "animate-pulse bg-[#ff8a5b]"
+                      : marketStreamStatus === "unavailable"
+                        ? "bg-[#697384]"
                     : "bg-[#36d399] shadow-[0_0_8px_#36d399]",
                 )}
               />
-              {marketLoading ? "CONNECTING" : "CME GLOBEX"}
+              {marketLoading || marketStreamStatus === "connecting"
+                ? "CONNECTING"
+                : marketStreamStatus === "live"
+                  ? "LIVE CME GLOBEX"
+                  : marketStreamStatus === "reconnecting"
+                    ? "RECONNECTING"
+                    : marketMeta.provider === "databento"
+                      ? "CME HISTORICAL"
+                      : "DEMO FEED"}
               <span className="text-[#38404d]">/</span>
               ETH
             </div>
@@ -635,7 +999,9 @@ export function TradingWorkspace() {
                   <p className="mt-0.5 font-mono text-[9px] text-[#5f6978]">
                     {marketMeta.adjustment} continuous /{" "}
                     {marketMeta.provider === "databento"
-                      ? "Databento delayed"
+                      ? marketMeta.delayed
+                        ? "Databento historical"
+                        : "Databento live"
                       : "deterministic simulation"}
                   </p>
                 </div>
@@ -718,9 +1084,7 @@ export function TradingWorkspace() {
               timeframe={workspace.timeframe}
               fibs={visibleFibs}
               dataLabel={
-                marketMeta.provider === "databento"
-                  ? `DATABENTO ${marketMeta.delayed ? "DELAYED" : "LIVE"}`
-                  : "LIVE DATA SIMULATION"
+                dataLabel
               }
               onUpdateFib={updateFib}
             />
@@ -929,8 +1293,8 @@ export function TradingWorkspace() {
                     </span>
                   </div>
                   <p className="mt-1.5 text-[9px] leading-4 text-[#8a806d]">
-                    TradersPost is not connected. Orders are recorded locally and
-                    never leave Voltis.
+                    TradersPost is not connected. Intents are validated
+                    server-side and never leave Voltis.
                   </p>
                 </div>
 

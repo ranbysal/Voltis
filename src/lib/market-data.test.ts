@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   backAdjustContinuousBars,
+  historyRequest,
   parseDatabentoJsonLines,
 } from "./market-data";
 
@@ -60,5 +61,11 @@ describe("Databento market data normalization", () => {
     });
     expect(adjusted[1].open).toBe(110);
   });
-});
 
+  it("uses granular source bars for exchange-session timeframes", () => {
+    expect(historyRequest("5m", 260).source).toBe("ohlcv-1m");
+    expect(historyRequest("1d", 260).source).toBe("ohlcv-1h");
+    expect(historyRequest("1w", 260).source).toBe("ohlcv-1h");
+    expect(historyRequest("1M", 260).source).toBe("ohlcv-1h");
+  });
+});

@@ -7,6 +7,12 @@ export const metadata: Metadata = {
   title: "Voltis | Futures Workspace",
   description:
     "A private multi-timeframe futures workspace for Dow and Nasdaq analysis.",
+  robots: {
+    index: false,
+    follow: false,
+    noarchive: true,
+    nosnippet: true,
+  },
 };
 
 export default function RootLayout({
@@ -23,4 +29,3 @@ export default function RootLayout({
     </html>
   );
 }
-
