@@ -69,8 +69,8 @@ export type OrderIntent = {
 export const FIB_LEVELS = [0, 0.382, 0.786, 1] as const;
 
 export const DEFAULT_WORKSPACE: WorkspaceState = {
-  family: "YM",
-  executionSize: "micro",
+  family: "NQ",
+  executionSize: "mini",
   timeframe: "30m",
   fibs: [],
   quantity: 2,

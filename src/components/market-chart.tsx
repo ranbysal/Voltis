@@ -5,6 +5,7 @@ import {
   ColorType,
   CrosshairMode,
   createChart,
+  LineSeries,
   LineStyle,
   type IChartApi,
   type ISeriesApi,
@@ -27,6 +28,8 @@ import {
 } from "@/lib/domain";
 import { cn } from "@/lib/utils";
 
+export type ChartStyle = "candles" | "line";
+
 type MarketChartProps = {
   bars: MarketBar[];
   family: SymbolFamily;
@@ -34,6 +37,9 @@ type MarketChartProps = {
   fibs: FibDrawing[];
   dataLabel: string;
   theme?: "light" | "dark";
+  chartStyle?: ChartStyle;
+  showEma20?: boolean;
+  showEma50?: boolean;
   readOnly?: boolean;
   onUpdateFib: (id: string, patch: Partial<FibDrawing>) => void;
 };
@@ -50,20 +56,49 @@ type FibGeometry = {
   endY: number | null;
 };
 
-const TIMEFRAME_STYLE: Record<
+const LIGHT_TF_STYLE: Record<
   Timeframe,
   { buy: string; sell: string; opacity: number }
 > = {
-  "5m": { buy: "#22a75a", sell: "#d04b56", opacity: 1 },
-  "10m": { buy: "#2faf65", sell: "#d65e67", opacity: 0.94 },
-  "30m": { buy: "#3bb56f", sell: "#d96f77", opacity: 0.88 },
-  "1h": { buy: "#49b879", sell: "#d77d83", opacity: 0.8 },
-  "4h": { buy: "#58b982", sell: "#ce8b90", opacity: 0.72 },
-  "1d": { buy: "#69b98b", sell: "#c49a9d", opacity: 0.6 },
-  "3d": { buy: "#7bb995", sell: "#b8a5a7", opacity: 0.5 },
-  "1w": { buy: "#8bb69d", sell: "#aaacad", opacity: 0.4 },
-  "1M": { buy: "#9bb2a5", sell: "#a2a2a2", opacity: 0.32 },
+  "5m": { buy: "#0ca35f", sell: "#d04b56", opacity: 1 },
+  "10m": { buy: "#21aa68", sell: "#d65e67", opacity: 0.94 },
+  "30m": { buy: "#33b070", sell: "#d96f77", opacity: 0.88 },
+  "1h": { buy: "#43b478", sell: "#d77d83", opacity: 0.8 },
+  "4h": { buy: "#55b681", sell: "#ce8b90", opacity: 0.72 },
+  "1d": { buy: "#67b78a", sell: "#c49a9d", opacity: 0.6 },
+  "3d": { buy: "#79b794", sell: "#b8a5a7", opacity: 0.5 },
+  "1w": { buy: "#8ab59d", sell: "#aaacad", opacity: 0.4 },
+  "1M": { buy: "#9ab1a5", sell: "#a2a2a2", opacity: 0.32 },
 };
+
+const DARK_TF_STYLE: Record<
+  Timeframe,
+  { buy: string; sell: string; opacity: number }
+> = {
+  "5m": { buy: "#1fe3c2", sell: "#ff5c64", opacity: 1 },
+  "10m": { buy: "#2bd9bc", sell: "#f56b72", opacity: 0.94 },
+  "30m": { buy: "#36cfb6", sell: "#ea7a80", opacity: 0.88 },
+  "1h": { buy: "#41c4b0", sell: "#dd888d", opacity: 0.8 },
+  "4h": { buy: "#4db8a9", sell: "#c98f93", opacity: 0.72 },
+  "1d": { buy: "#58aba1", sell: "#b39497", opacity: 0.6 },
+  "3d": { buy: "#639e99", sell: "#9d9899", opacity: 0.5 },
+  "1w": { buy: "#6d9090", sell: "#8a9799", opacity: 0.4 },
+  "1M": { buy: "#778286", sell: "#7b9496", opacity: 0.32 },
+};
+
+export function computeEma(bars: MarketBar[], length: number) {
+  if (bars.length === 0) {
+    return [];
+  }
+  const k = 2 / (length + 1);
+  const out: { time: number; value: number }[] = [];
+  let ema = bars[0].close;
+  for (const bar of bars) {
+    ema = bar.close * k + ema * (1 - k);
+    out.push({ time: bar.time, value: ema });
+  }
+  return out;
+}
 
 function numericTime(time: Time | null): number | null {
   if (time === null) {
@@ -80,14 +115,16 @@ function numericTime(time: Time | null): number | null {
 
 function buildFibGeometry(
   chart: IChartApi,
-  series: ISeriesApi<"Candlestick", Time>,
+  series: ISeriesApi<"Candlestick", Time> | ISeriesApi<"Line", Time>,
   fibs: FibDrawing[],
   timeframe: Timeframe,
+  dark: boolean,
 ): FibGeometry[] {
+  const palette = dark ? DARK_TF_STYLE : LIGHT_TF_STYLE;
   return fibs
     .filter((fib) => fib.visible)
     .map((fib) => {
-      const style = TIMEFRAME_STYLE[fib.timeframe];
+      const style = palette[fib.timeframe];
       const color = fib.direction === "buy" ? style.buy : style.sell;
       const isActive = fib.timeframe === timeframe;
       const lines = FIB_LEVELS.map((level) => ({
@@ -123,13 +160,19 @@ export function MarketChart({
   fibs,
   dataLabel,
   theme = "light",
+  chartStyle = "candles",
+  showEma20 = true,
+  showEma50 = true,
   readOnly = false,
   onUpdateFib,
 }: MarketChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const seriesRef =
-    useRef<ISeriesApi<"Candlestick", Time> | null>(null);
+  const seriesRef = useRef<
+    ISeriesApi<"Candlestick", Time> | ISeriesApi<"Line", Time> | null
+  >(null);
+  const ema20Ref = useRef<ISeriesApi<"Line", Time> | null>(null);
+  const ema50Ref = useRef<ISeriesApi<"Line", Time> | null>(null);
   const [geometry, setGeometry] = useState<FibGeometry[]>([]);
 
   useEffect(() => {
@@ -139,11 +182,12 @@ export function MarketChart({
     }
 
     const dark = theme === "dark";
-    const chartBackground = dark ? "#151816" : "#fbfbfa";
-    const chartText = dark ? "#a8ada8" : "#54585d";
-    const chartGrid = dark ? "#252a26" : "#eeeeeb";
-    const chartBorder = dark ? "#303530" : "#e1e1dd";
-    const downColor = dark ? "#d6d8d5" : "#151515";
+    const chartBackground = dark ? "#060b0b" : "#fcfcfb";
+    const chartText = dark ? "#58716d" : "#54585d";
+    const chartGrid = dark ? "#101a19" : "#efeeeb";
+    const chartBorder = dark ? "#15201f" : "#e6e5e1";
+    const upColor = dark ? "#1fe3c2" : "#04a35e";
+    const downColor = dark ? "#cfd8d6" : "#16181a";
 
     const chart = createChart(container, {
       autoSize: true,
@@ -175,19 +219,19 @@ export function MarketChart({
         mode: CrosshairMode.Normal,
         vertLine: {
           color: dark
-            ? "rgba(226, 230, 225, 0.34)"
+            ? "rgba(31, 227, 194, 0.35)"
             : "rgba(31, 34, 38, 0.38)",
           width: 1,
           style: LineStyle.Dashed,
-          labelBackgroundColor: "#111111",
+          labelBackgroundColor: dark ? "#0e1717" : "#111111",
         },
         horzLine: {
           color: dark
-            ? "rgba(226, 230, 225, 0.34)"
+            ? "rgba(31, 227, 194, 0.35)"
             : "rgba(31, 34, 38, 0.38)",
           width: 1,
           style: LineStyle.Dashed,
-          labelBackgroundColor: "#111111",
+          labelBackgroundColor: dark ? "#0e1717" : "#111111",
         },
       },
       handleScale: {
@@ -203,31 +247,68 @@ export function MarketChart({
       },
     });
 
-    const series = chart.addSeries(CandlestickSeries, {
-      upColor: "#47bd78",
-      downColor,
-      borderVisible: false,
-      wickUpColor: "#47bd78",
-      wickDownColor: downColor,
-      priceLineColor: downColor,
-      priceLineWidth: 1,
-      lastValueVisible: true,
-      priceFormat: {
-        type: "price",
-        precision: 0,
-        minMove: 1,
-      },
+    const series =
+      chartStyle === "candles"
+        ? chart.addSeries(CandlestickSeries, {
+            upColor,
+            downColor,
+            borderVisible: false,
+            wickUpColor: upColor,
+            wickDownColor: downColor,
+            priceLineColor: upColor,
+            priceLineWidth: 1,
+            lastValueVisible: true,
+            priceFormat: {
+              type: "price",
+              precision: 0,
+              minMove: 1,
+            },
+          })
+        : chart.addSeries(LineSeries, {
+            color: upColor,
+            lineWidth: 2,
+            priceLineColor: upColor,
+            lastValueVisible: true,
+            priceFormat: {
+              type: "price",
+              precision: 0,
+              minMove: 1,
+            },
+          });
+
+    const ema20 = chart.addSeries(LineSeries, {
+      color: dark ? "#12b5a0" : "#2ba98f",
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+    const ema50 = chart.addSeries(LineSeries, {
+      color: dark ? "#3e6d85" : "#a0a6a3",
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
     });
 
     chartRef.current = chart;
     seriesRef.current = series;
+    ema20Ref.current = ema20;
+    ema50Ref.current = ema50;
 
     return () => {
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
+      ema20Ref.current = null;
+      ema50Ref.current = null;
     };
-  }, [theme]);
+  }, [theme, chartStyle]);
+
+  useEffect(() => {
+    ema20Ref.current?.applyOptions({ visible: showEma20 });
+    ema50Ref.current?.applyOptions({ visible: showEma50 });
+  }, [showEma20, showEma50, theme, chartStyle]);
 
   useEffect(() => {
     const series = seriesRef.current;
@@ -243,22 +324,45 @@ export function MarketChart({
         minMove: family === "YM" ? 1 : 0.25,
       },
     });
-    series.setData(
-      bars.map((bar) => ({
-        ...bar,
-        time: bar.time as UTCTimestamp,
+    if (chartStyle === "candles") {
+      (series as ISeriesApi<"Candlestick", Time>).setData(
+        bars.map((bar) => ({
+          ...bar,
+          time: bar.time as UTCTimestamp,
+        })),
+      );
+    } else {
+      (series as ISeriesApi<"Line", Time>).setData(
+        bars.map((bar) => ({
+          time: bar.time as UTCTimestamp,
+          value: bar.close,
+        })),
+      );
+    }
+    ema20Ref.current?.setData(
+      computeEma(bars, 20).map((point) => ({
+        time: point.time as UTCTimestamp,
+        value: point.value,
+      })),
+    );
+    ema50Ref.current?.setData(
+      computeEma(bars, 50).map((point) => ({
+        time: point.time as UTCTimestamp,
+        value: point.value,
       })),
     );
     let cancelled = false;
     queueMicrotask(() => {
       if (!cancelled) {
-        setGeometry(buildFibGeometry(chart, series, fibs, timeframe));
+        setGeometry(
+          buildFibGeometry(chart, series, fibs, timeframe, theme === "dark"),
+        );
       }
     });
     return () => {
       cancelled = true;
     };
-  }, [bars, family, fibs, theme, timeframe]);
+  }, [bars, family, fibs, theme, timeframe, chartStyle]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -270,7 +374,7 @@ export function MarketChart({
       from: Math.max(0, bars.length - 150),
       to: bars.length + 7,
     });
-  }, [bars.length, family, timeframe]);
+  }, [bars.length, family, timeframe, chartStyle]);
 
   function handleAnchorMove(
     event: ReactPointerEvent<SVGCircleElement>,
@@ -313,7 +417,7 @@ export function MarketChart({
     <div
       className={cn(
         "relative h-full min-h-0 overflow-hidden",
-        theme === "dark" ? "bg-[#151816]" : "bg-[#fbfbfa]",
+        theme === "dark" ? "bg-[#060b0b]" : "bg-[#fcfcfb]",
       )}
     >
       <div ref={containerRef} className="absolute inset-0" />
@@ -350,21 +454,23 @@ export function MarketChart({
                     strokeWidth={isActive ? 1.35 : 1}
                   />
                   <text
-                    x={12}
+                    x="100%"
+                    dx={-92}
                     y={y - 6}
+                    textAnchor="end"
                     fill={color}
                     fontFamily='"Geist Mono", ui-monospace, monospace'
                     fontSize={10}
                     fontWeight={600}
                     paintOrder="stroke"
-                    stroke={theme === "dark" ? "#151816" : "#fbfbfa"}
+                    stroke={theme === "dark" ? "#060b0b" : "#fcfcfb"}
                     strokeWidth={4}
                   >
-                    {fib.timeframe.toUpperCase()} {fib.direction.toUpperCase()}{" "}
-                    {level} |{" "}
-                    {price.toLocaleString("en-US", {
+                    {level}{" "}
+                    {`(${price.toLocaleString("en-US", {
+                      minimumFractionDigits: family === "YM" ? 0 : 2,
                       maximumFractionDigits: family === "YM" ? 0 : 2,
-                    })}
+                    })})`}
                   </text>
                 </g>
               ))}
@@ -395,7 +501,7 @@ export function MarketChart({
                       cx={anchor.x}
                       cy={anchor.y}
                       r={6}
-                      fill={theme === "dark" ? "#151816" : "#ffffff"}
+                      fill={theme === "dark" ? "#0b1212" : "#ffffff"}
                       stroke={color}
                       strokeWidth={2}
                       onPointerDown={(event) => {
@@ -422,11 +528,16 @@ export function MarketChart({
         className={cn(
           "pointer-events-none absolute bottom-3 left-3 z-20 flex items-center gap-2 rounded-md border px-2.5 py-1.5 font-mono text-[9px] shadow-sm backdrop-blur",
           theme === "dark"
-            ? "border-[#303530] bg-[#181b19]/92 text-[#a8ada8]"
-            : "border-[#e2e2de] bg-white/92 text-[#6d7277]",
+            ? "border-[#15201f] bg-[#0b1212]/92 text-[#8fa9a4]"
+            : "border-[#e6e5e1] bg-white/92 text-[#6d7277]",
         )}
       >
-        <span className="h-1.5 w-1.5 rounded-full bg-[#47bd78]" />
+        <span
+          className={cn(
+            "h-1.5 w-1.5 rounded-full",
+            theme === "dark" ? "bg-[#1fe3c2]" : "bg-[#04a35e]",
+          )}
+        />
         {dataLabel}
       </div>
     </div>

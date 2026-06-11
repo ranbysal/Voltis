@@ -1,7 +1,14 @@
 import type { Metadata } from "next";
 import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
+import { Playfair_Display } from "next/font/google";
 import "./globals.css";
+
+const playfair = Playfair_Display({
+  subsets: ["latin"],
+  style: ["italic", "normal"],
+  variable: "--font-serif",
+});
 
 export const metadata: Metadata = {
   title: "Voltis | Futures Workspace",
@@ -23,7 +30,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${GeistSans.variable} ${GeistMono.variable}`}
+      className={`${GeistSans.variable} ${GeistMono.variable} ${playfair.variable}`}
     >
       <body>{children}</body>
     </html>
