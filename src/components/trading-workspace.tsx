@@ -16,7 +16,8 @@ import {
   Layers3,
   Lock,
   Maximize2,
-  MoreHorizontal,
+  Minimize2,
+  Moon,
   PanelRightClose,
   RefreshCw,
   RotateCcw,
@@ -25,10 +26,12 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Smile,
+  Sun,
   Trash2,
   TrendingDown,
   TrendingUp,
   Unlock,
+  X,
   ZoomIn,
 } from "lucide-react";
 import { nanoid } from "nanoid";
@@ -67,9 +70,12 @@ import {
   saveWorkspace,
 } from "@/lib/persistence";
 import { cn } from "@/lib/utils";
+import { BrandMark } from "@/components/brand-mark";
 import { MarketChart } from "@/components/market-chart";
 
 const provider = new ApiExecutionProvider();
+type WorkspaceTheme = "light" | "dark";
+type WorkspacePanel = "positions" | "journal" | "analytics";
 type MarketStreamStatus =
   | "unavailable"
   | "connecting"
@@ -188,10 +194,14 @@ export function TradingWorkspace() {
   const [paperMessage, setPaperMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [panelMode, setPanelMode] = useState<"fibs" | "trade">("fibs");
+  const [theme, setTheme] = useState<WorkspaceTheme>("light");
+  const [activePanel, setActivePanel] = useState<WorkspacePanel | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [selectedAccounts, setSelectedAccounts] = useState([
     "Apex 50K",
     "Take Profit 50K",
   ]);
+  const workspaceRootRef = useRef<HTMLElement>(null);
   const historyRequestRef = useRef(0);
   const activeContractRef = useRef(DEFAULT_MARKET_META.activeContract);
   const selectionRef = useRef({
@@ -269,6 +279,31 @@ export function TradingWorkspace() {
       }
     });
   }, [loadMarketHistory]);
+
+  useEffect(() => {
+    const savedTheme = window.localStorage.getItem("voltis-theme");
+    if (savedTheme === "dark") {
+      queueMicrotask(() => setTheme("dark"));
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("voltis-theme", theme);
+    document.documentElement.style.colorScheme = theme;
+  }, [theme]);
+
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      if (activePanel) {
+        setActivePanel(null);
+      }
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [activePanel]);
 
   useEffect(() => {
     if (hydrated) {
@@ -672,7 +707,11 @@ export function TradingWorkspace() {
 
   async function signOut() {
     await fetch("/api/auth/logout", { method: "POST" });
-    window.location.reload();
+    window.location.assign("/");
+  }
+
+  function toggleFullscreen() {
+    setIsFullscreen((current) => !current);
   }
 
   const dataLabel =
@@ -683,14 +722,16 @@ export function TradingWorkspace() {
         : "CONNECTING LIVE DATA";
 
   return (
-    <main className="h-dvh min-w-[1180px] overflow-hidden bg-[#d6d6d3] p-6 text-[#171717]">
-      <div className="mx-auto grid h-full max-w-[1536px] grid-rows-[74px_minmax(0,1fr)] overflow-hidden rounded-xl border border-white/80 bg-[#f8f8f6] shadow-[0_24px_70px_rgba(0,0,0,0.16)]">
+    <main
+      ref={workspaceRootRef}
+      data-theme={theme}
+      data-fullscreen={isFullscreen ? "true" : "false"}
+      className="voltis-workspace relative h-dvh min-w-[1180px] overflow-hidden bg-[#eae9e7] p-6 text-[#171717]"
+    >
+      <div className="voltis-frame mx-auto grid h-full max-w-[1536px] grid-rows-[74px_minmax(0,1fr)] overflow-hidden rounded-xl border border-white/80 bg-[#f8f8f6] shadow-[0_24px_70px_rgba(0,0,0,0.16)]">
         <header className="flex items-center border-b border-[#e3e3df] px-7">
           <div className="flex w-[250px] items-center gap-3">
-            <div className="relative h-9 w-9">
-              <span className="absolute left-0.5 top-1.5 h-6 w-8 rotate-45 rounded-full border-2 border-black" />
-              <span className="absolute left-0.5 top-1.5 h-6 w-8 -rotate-45 rounded-full border-2 border-black" />
-            </div>
+            <BrandMark inverse={theme === "dark"} />
             <span className="text-[20px] font-semibold tracking-[-0.04em]">
               Voltis
             </span>
@@ -702,9 +743,22 @@ export function TradingWorkspace() {
                 <button
                   key={Icon.displayName ?? index}
                   aria-label={`Workspace navigation ${index + 1}`}
+                  onClick={() => {
+                    if (index === 0) setActivePanel(null);
+                    if (index === 1) setActivePanel("positions");
+                    if (index === 2 || index === 3) setActivePanel("journal");
+                    if (index === 4) setActivePanel("analytics");
+                  }}
                   className={cn(
                     "flex h-11 w-11 items-center justify-center rounded-lg border border-[#eeeeeb] bg-white text-[#222] shadow-sm transition hover:bg-[#f2f2ef]",
-                    index === 0 && "border-black bg-black text-white hover:bg-black",
+                    (index === 0 ? activePanel === null : false) &&
+                      "border-black bg-black text-white hover:bg-black",
+                    (index === 1 && activePanel === "positions") ||
+                      ((index === 2 || index === 3) &&
+                        activePanel === "journal") ||
+                      (index === 4 && activePanel === "analytics")
+                      ? "border-black bg-black text-white hover:bg-black"
+                      : null,
                   )}
                 >
                   <Icon size={16} />
@@ -718,6 +772,30 @@ export function TradingWorkspace() {
               <Search size={17} className="text-black" />
               <span className="text-[11px]">Search Dashboard</span>
             </div>
+            <button
+              onClick={toggleFullscreen}
+              data-testid="fullscreen-toggle"
+              className="flex h-11 items-center gap-2 rounded-lg border border-[#eeeeeb] bg-white px-3 text-[9px] font-medium shadow-sm transition hover:bg-[#f2f2ef]"
+            >
+              {isFullscreen ? (
+                <Minimize2 size={14} />
+              ) : (
+                <Maximize2 size={14} />
+              )}
+              {isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+            </button>
+            <button
+              aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
+              title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
+              onClick={() =>
+                setTheme((current) =>
+                  current === "light" ? "dark" : "light",
+                )
+              }
+              className="flex h-11 w-11 items-center justify-center rounded-lg border border-[#eeeeeb] bg-white shadow-sm transition hover:bg-[#f2f2ef]"
+            >
+              {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
+            </button>
             <button
               aria-label="Notifications"
               className="relative flex h-11 w-11 items-center justify-center rounded-lg border border-[#eeeeeb] bg-white shadow-sm"
@@ -744,7 +822,7 @@ export function TradingWorkspace() {
         </header>
 
         <section className="grid min-h-0 grid-cols-[minmax(0,1fr)_330px]">
-          <div className="grid min-w-0 grid-rows-[88px_54px_minmax(0,1fr)_82px] gap-0 px-7 pb-6">
+          <div className="grid min-w-0 grid-rows-[88px_54px_minmax(0,1fr)_82px] gap-0 px-7 pb-6 max-[1350px]:grid-rows-[78px_96px_minmax(0,1fr)_82px]">
             <div className="flex items-end justify-between pb-5">
               <div>
                 <h1 className="text-[29px] font-medium tracking-[-0.04em]">
@@ -789,15 +867,23 @@ export function TradingWorkspace() {
               </div>
             </div>
 
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between max-[1350px]:flex-col max-[1350px]:items-start max-[1350px]:justify-center max-[1350px]:gap-1.5">
               <div className="flex items-center gap-1">
-                {["Chart", "Positions", "Trade Journal", "Analytics"].map(
-                  (label, index) => (
+                {[
+                  ["Chart", null],
+                  ["Positions", "positions"],
+                  ["Journal", "journal"],
+                  ["Analytics", "analytics"],
+                ].map(([label, panel]) => (
                     <button
                       key={label}
+                      onClick={() =>
+                        setActivePanel(panel as WorkspacePanel | null)
+                      }
                       className={cn(
-                        "h-10 rounded-lg border border-[#e5e5e1] bg-transparent px-5 text-[10px] transition hover:bg-white",
-                        index === 0 && "border-black bg-black text-white hover:bg-black",
+                        "h-10 rounded-lg border border-[#e5e5e1] bg-transparent px-3 text-[10px] transition hover:bg-white",
+                        activePanel === panel &&
+                          "border-black bg-black text-white hover:bg-black",
                       )}
                     >
                       {label}
@@ -827,7 +913,7 @@ export function TradingWorkspace() {
                       key={item}
                       onClick={() => selectTimeframe(item)}
                       className={cn(
-                        "h-8 rounded-md px-2.5 font-mono text-[9px] text-[#666]",
+                        "h-8 rounded-md px-2 font-mono text-[9px] text-[#666]",
                         workspace.timeframe === item && "bg-black text-white",
                       )}
                     >
@@ -848,12 +934,6 @@ export function TradingWorkspace() {
                 >
                   <TrendingDown size={13} />
                   Sell fib
-                </button>
-                <button
-                  aria-label="More chart controls"
-                  className="flex h-10 w-10 items-center justify-center rounded-lg border border-[#e5e5e1] bg-white"
-                >
-                  <MoreHorizontal size={16} />
                 </button>
               </div>
             </div>
@@ -883,15 +963,23 @@ export function TradingWorkspace() {
                   ))}
                 </div>
                 <div className="mt-auto flex flex-col gap-1">
-                  {[RotateCcw, Maximize2].map((Icon, index) => (
-                    <button
-                      key={Icon.displayName ?? index}
-                      aria-label={`Chart utility ${index + 1}`}
-                      className="flex h-9 w-9 items-center justify-center rounded-md text-[#444] hover:bg-[#efefec]"
-                    >
-                      <Icon size={16} />
-                    </button>
-                  ))}
+                  <button
+                    aria-label="Reset chart view"
+                    className="flex h-9 w-9 items-center justify-center rounded-md text-[#444] hover:bg-[#efefec]"
+                  >
+                    <RotateCcw size={16} />
+                  </button>
+                  <button
+                    aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+                    onClick={toggleFullscreen}
+                    className="flex h-9 w-9 items-center justify-center rounded-md text-[#444] hover:bg-[#efefec]"
+                  >
+                    {isFullscreen ? (
+                      <Minimize2 size={16} />
+                    ) : (
+                      <Maximize2 size={16} />
+                    )}
+                  </button>
                 </div>
               </aside>
 
@@ -915,6 +1003,7 @@ export function TradingWorkspace() {
                 timeframe={workspace.timeframe}
                 fibs={visibleFibs}
                 dataLabel={dataLabel}
+                theme={theme}
                 onUpdateFib={updateFib}
               />
             </div>
@@ -1305,6 +1394,17 @@ export function TradingWorkspace() {
           </aside>
         </section>
       </div>
+      {activePanel ? (
+        <WorkspaceDrawer
+          panel={activePanel}
+          family={workspace.family}
+          currentPrice={
+            lastBar ? formatPrice(lastBar.close, workspace.family) : "--"
+          }
+          sessionMove={sessionMove}
+          onClose={() => setActivePanel(null)}
+        />
+      ) : null}
     </main>
   );
 }
@@ -1344,6 +1444,335 @@ function NumberControl({
         >
           +
         </button>
+      </div>
+    </div>
+  );
+}
+
+function WorkspaceDrawer({
+  panel,
+  family,
+  currentPrice,
+  sessionMove,
+  onClose,
+}: {
+  panel: WorkspacePanel;
+  family: SymbolFamily;
+  currentPrice: string;
+  sessionMove: number;
+  onClose: () => void;
+}) {
+  const titles: Record<WorkspacePanel, { eyebrow: string; title: string }> = {
+    positions: {
+      eyebrow: "Live portfolio",
+      title: "Positions",
+    },
+    journal: {
+      eyebrow: "Review and refine",
+      title: "Journal",
+    },
+    analytics: {
+      eyebrow: "Performance intelligence",
+      title: "Analytics",
+    },
+  };
+
+  return (
+    <div
+      className="absolute inset-0 z-50 flex justify-end bg-black/25 p-3 backdrop-blur-[2px]"
+      role="dialog"
+      aria-modal="true"
+      aria-label={titles[panel].title}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <section className="voltis-drawer flex h-full w-[min(760px,72vw)] flex-col overflow-hidden rounded-2xl border border-white/70 bg-[#f8f8f6] shadow-[0_30px_90px_rgba(0,0,0,0.28)]">
+        <header className="flex items-center border-b border-[#e2e2de] px-8 py-6">
+          <div>
+            <p className="font-mono text-[8px] uppercase tracking-[0.18em] text-[#858782]">
+              {titles[panel].eyebrow}
+            </p>
+            <h2 className="mt-2 text-[28px] font-medium tracking-[-0.05em]">
+              {titles[panel].title}
+            </h2>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label={`Close ${titles[panel].title}`}
+            className="ml-auto flex h-11 w-11 items-center justify-center rounded-xl border border-[#e2e2de] bg-white transition hover:bg-[#efefec]"
+          >
+            <X size={17} />
+          </button>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-8">
+          {panel === "positions" ? (
+            <PositionsPanel family={family} currentPrice={currentPrice} />
+          ) : null}
+          {panel === "journal" ? <JournalPanel /> : null}
+          {panel === "analytics" ? (
+            <AnalyticsPanel sessionMove={sessionMove} />
+          ) : null}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function PositionsPanel({
+  family,
+  currentPrice,
+}: {
+  family: SymbolFamily;
+  currentPrice: string;
+}) {
+  const positions = [
+    {
+      account: "Apex 50K",
+      symbol: family === "YM" ? "MYM" : "MNQ",
+      side: "LONG",
+      quantity: 2,
+      entry: family === "YM" ? "50,512" : "19,842.50",
+      pnl: "+$152.00",
+    },
+    {
+      account: "Take Profit 50K",
+      symbol: family,
+      side: "LONG",
+      quantity: 1,
+      entry: family === "YM" ? "50,536" : "19,856.25",
+      pnl: "+$104.00",
+    },
+  ];
+
+  return (
+    <div>
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          ["Open P&L", "+$256.00"],
+          ["Daily realized", "+$684.50"],
+          ["Buying power", "$96,420"],
+        ].map(([label, value], index) => (
+          <div
+            key={label}
+            className="rounded-xl border border-[#e2e2de] bg-white p-5"
+          >
+            <p className="text-[9px] text-[#858782]">{label}</p>
+            <p
+              className={cn(
+                "mt-3 font-mono text-lg font-medium",
+                index < 2 && "text-[#349961]",
+              )}
+            >
+              {value}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-6 overflow-hidden rounded-xl border border-[#e2e2de] bg-white">
+        <div className="grid grid-cols-[1.5fr_.8fr_.7fr_.7fr_1fr_1fr_1fr] border-b border-[#e8e8e4] px-5 py-3 font-mono text-[8px] uppercase tracking-[0.1em] text-[#8a8c87]">
+          <span>Account</span>
+          <span>Symbol</span>
+          <span>Side</span>
+          <span>Qty</span>
+          <span>Entry</span>
+          <span>Mark</span>
+          <span className="text-right">Open P&L</span>
+        </div>
+        {positions.map((position) => (
+          <div
+            key={position.account}
+            className="grid grid-cols-[1.5fr_.8fr_.7fr_.7fr_1fr_1fr_1fr] items-center border-b border-[#eeeeeb] px-5 py-5 text-[10px] last:border-b-0"
+          >
+            <span className="font-medium">{position.account}</span>
+            <span className="font-mono">{position.symbol}</span>
+            <span className="font-mono text-[8px] text-[#349961]">
+              {position.side}
+            </span>
+            <span className="font-mono">{position.quantity}</span>
+            <span className="font-mono">{position.entry}</span>
+            <span className="font-mono">{currentPrice}</span>
+            <span className="text-right font-mono text-[#349961]">
+              {position.pnl}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-6 flex items-center justify-between rounded-xl border border-[#d8eadf] bg-[#edf7f0] px-5 py-4">
+        <div>
+          <p className="text-[10px] font-medium text-[#26794a]">
+            Risk is within plan
+          </p>
+          <p className="mt-1 text-[9px] text-[#5e8a70]">
+            0.42% of combined account equity is currently at risk.
+          </p>
+        </div>
+        <ShieldCheck size={19} className="text-[#349961]" />
+      </div>
+    </div>
+  );
+}
+
+function JournalPanel() {
+  const entries = [
+    {
+      date: "JUN 10",
+      setup: "4H rejection into 30m continuation",
+      symbol: "MYM",
+      result: "+$428",
+      note: "Waited for the second close below the sell fib before entry.",
+    },
+    {
+      date: "JUN 09",
+      setup: "1D buy fib reclaim",
+      symbol: "MNQ",
+      result: "+$312",
+      note: "Clean reclaim. Reduced size after the first target was paid.",
+    },
+    {
+      date: "JUN 08",
+      setup: "Opening drive fade",
+      symbol: "MYM",
+      result: "-$116",
+      note: "Entry was early. Require a confirmed structure break next time.",
+    },
+  ];
+
+  return (
+    <div className="grid gap-6 lg:grid-cols-[1fr_260px]">
+      <div className="space-y-3">
+        {entries.map((entry) => (
+          <article
+            key={`${entry.date}-${entry.setup}`}
+            className="rounded-xl border border-[#e2e2de] bg-white p-5"
+          >
+            <div className="flex items-center gap-3">
+              <span className="font-mono text-[8px] text-[#858782]">
+                {entry.date}
+              </span>
+              <span className="rounded bg-[#f0f0ed] px-2 py-1 font-mono text-[8px]">
+                {entry.symbol}
+              </span>
+              <span
+                className={cn(
+                  "ml-auto font-mono text-[10px] font-medium",
+                  entry.result.startsWith("+")
+                    ? "text-[#349961]"
+                    : "text-[#b74952]",
+                )}
+              >
+                {entry.result}
+              </span>
+            </div>
+            <h3 className="mt-4 text-[13px] font-medium">{entry.setup}</h3>
+            <p className="mt-2 text-[10px] leading-5 text-[#72746f]">
+              {entry.note}
+            </p>
+          </article>
+        ))}
+      </div>
+
+      <aside className="rounded-xl border border-[#e2e2de] bg-white p-5">
+        <p className="font-mono text-[8px] uppercase tracking-[0.14em] text-[#858782]">
+          New note
+        </p>
+        <textarea
+          aria-label="New journal note"
+          placeholder="What did the market show you?"
+          className="mt-4 h-40 w-full resize-none rounded-lg border border-[#e2e2de] bg-[#fafaf8] p-3 text-[10px] leading-5 outline-none placeholder:text-[#aaa] focus:border-[#999]"
+        />
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <button className="h-10 rounded-lg border border-[#e2e2de] bg-[#fafaf8] text-[9px]">
+            Add chart
+          </button>
+          <button className="h-10 rounded-lg bg-black text-[9px] font-medium text-white">
+            Save note
+          </button>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function AnalyticsPanel({ sessionMove }: { sessionMove: number }) {
+  const bars = [48, 64, 42, 78, 56, 88, 74, 96, 68, 84, 92, 76];
+
+  return (
+    <div>
+      <div className="grid grid-cols-4 gap-3">
+        {[
+          ["Net P&L", "+$4,286"],
+          ["Win rate", "68.4%"],
+          ["Profit factor", "2.41"],
+          ["Avg. R multiple", "1.84R"],
+        ].map(([label, value], index) => (
+          <div
+            key={label}
+            className="rounded-xl border border-[#e2e2de] bg-white p-5"
+          >
+            <p className="text-[9px] text-[#858782]">{label}</p>
+            <p
+              className={cn(
+                "mt-3 font-mono text-lg font-medium",
+                index === 0 && "text-[#349961]",
+              )}
+            >
+              {value}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-6 rounded-xl border border-[#e2e2de] bg-white p-6">
+        <div className="flex items-start justify-between">
+          <div>
+            <p className="text-[11px] font-medium">Cumulative performance</p>
+            <p className="mt-1 text-[9px] text-[#858782]">
+              Last 30 trading sessions
+            </p>
+          </div>
+          <span
+            className={cn(
+              "rounded-lg px-3 py-2 font-mono text-[9px]",
+              sessionMove >= 0
+                ? "bg-[#edf7f0] text-[#297d4c]"
+                : "bg-[#f8eeee] text-[#9f3e47]",
+            )}
+          >
+            TODAY {sessionMove >= 0 ? "+" : ""}
+            {sessionMove.toFixed(2)}%
+          </span>
+        </div>
+
+        <div className="mt-8 flex h-64 items-end gap-3 border-b border-[#dededa] px-2">
+          {bars.map((height, index) => (
+            <div
+              key={`${height}-${index}`}
+              className="group relative flex h-full flex-1 items-end"
+            >
+              <div
+                className={cn(
+                  "w-full rounded-t-md transition group-hover:opacity-75",
+                  index === 3 || index === 8
+                    ? "bg-[#c86a72]"
+                    : "bg-[#4bb879]",
+                )}
+                style={{ height: `${height}%` }}
+              />
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 flex justify-between font-mono text-[8px] text-[#969893]">
+          <span>MAY 01</span>
+          <span>MAY 15</span>
+          <span>JUN 01</span>
+          <span>JUN 11</span>
+        </div>
       </div>
     </div>
   );

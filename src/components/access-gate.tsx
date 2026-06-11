@@ -1,7 +1,9 @@
 "use client";
 
-import { LockKeyhole } from "lucide-react";
+import { ArrowLeft, LockKeyhole } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
+import { BrandMark } from "@/components/brand-mark";
 
 export function AccessGate({ configured }: { configured: boolean }) {
   const [password, setPassword] = useState("");
@@ -30,13 +32,17 @@ export function AccessGate({ configured }: { configured: boolean }) {
   }
 
   return (
-    <main className="grid min-h-dvh place-items-center bg-[#d6d6d3] px-6 text-[#151515]">
+    <main className="relative grid min-h-dvh place-items-center bg-[#eae9e7] px-6 text-[#151515]">
+      <Link
+        href="/"
+        className="absolute left-6 top-6 flex items-center gap-2 text-[10px] text-[#6f716c] transition hover:text-black"
+      >
+        <ArrowLeft size={13} />
+        Back to Voltis
+      </Link>
       <div className="w-full max-w-sm rounded-2xl border border-[#dededa] bg-[#fbfbfa] p-7 shadow-[0_30px_100px_rgba(0,0,0,0.16)]">
         <div className="flex items-center gap-3">
-          <div className="relative h-10 w-10">
-            <span className="absolute left-1 top-2 h-6 w-8 rotate-45 rounded-full border-2 border-black" />
-            <span className="absolute left-1 top-2 h-6 w-8 -rotate-45 rounded-full border-2 border-black" />
-          </div>
+          <BrandMark />
           <div>
             <h1 className="text-base font-semibold tracking-[-0.03em]">
               VOLTIS

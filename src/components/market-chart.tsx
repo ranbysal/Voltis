@@ -25,6 +25,7 @@ import {
   type SymbolFamily,
   type Timeframe,
 } from "@/lib/domain";
+import { cn } from "@/lib/utils";
 
 type MarketChartProps = {
   bars: MarketBar[];
@@ -32,6 +33,7 @@ type MarketChartProps = {
   timeframe: Timeframe;
   fibs: FibDrawing[];
   dataLabel: string;
+  theme?: "light" | "dark";
   readOnly?: boolean;
   onUpdateFib: (id: string, patch: Partial<FibDrawing>) => void;
 };
@@ -120,6 +122,7 @@ export function MarketChart({
   timeframe,
   fibs,
   dataLabel,
+  theme = "light",
   readOnly = false,
   onUpdateFib,
 }: MarketChartProps) {
@@ -135,26 +138,33 @@ export function MarketChart({
       return;
     }
 
+    const dark = theme === "dark";
+    const chartBackground = dark ? "#151816" : "#fbfbfa";
+    const chartText = dark ? "#a8ada8" : "#54585d";
+    const chartGrid = dark ? "#252a26" : "#eeeeeb";
+    const chartBorder = dark ? "#303530" : "#e1e1dd";
+    const downColor = dark ? "#d6d8d5" : "#151515";
+
     const chart = createChart(container, {
       autoSize: true,
       layout: {
-        background: { type: ColorType.Solid, color: "#fbfbfa" },
-        textColor: "#54585d",
+        background: { type: ColorType.Solid, color: chartBackground },
+        textColor: chartText,
         fontFamily: '"Geist Mono", ui-monospace, monospace',
         fontSize: 10,
         attributionLogo: false,
       },
       grid: {
-        vertLines: { color: "#eeeeeb" },
-        horzLines: { color: "#eeeeeb" },
+        vertLines: { color: chartGrid },
+        horzLines: { color: chartGrid },
       },
       rightPriceScale: {
-        borderColor: "#e1e1dd",
+        borderColor: chartBorder,
         scaleMargins: { top: 0.08, bottom: 0.08 },
         minimumWidth: 76,
       },
       timeScale: {
-        borderColor: "#e1e1dd",
+        borderColor: chartBorder,
         timeVisible: true,
         secondsVisible: false,
         rightOffset: 8,
@@ -164,13 +174,17 @@ export function MarketChart({
       crosshair: {
         mode: CrosshairMode.Normal,
         vertLine: {
-          color: "rgba(31, 34, 38, 0.38)",
+          color: dark
+            ? "rgba(226, 230, 225, 0.34)"
+            : "rgba(31, 34, 38, 0.38)",
           width: 1,
           style: LineStyle.Dashed,
           labelBackgroundColor: "#111111",
         },
         horzLine: {
-          color: "rgba(31, 34, 38, 0.38)",
+          color: dark
+            ? "rgba(226, 230, 225, 0.34)"
+            : "rgba(31, 34, 38, 0.38)",
           width: 1,
           style: LineStyle.Dashed,
           labelBackgroundColor: "#111111",
@@ -191,11 +205,11 @@ export function MarketChart({
 
     const series = chart.addSeries(CandlestickSeries, {
       upColor: "#47bd78",
-      downColor: "#151515",
+      downColor,
       borderVisible: false,
       wickUpColor: "#47bd78",
-      wickDownColor: "#151515",
-      priceLineColor: "#151515",
+      wickDownColor: downColor,
+      priceLineColor: downColor,
       priceLineWidth: 1,
       lastValueVisible: true,
       priceFormat: {
@@ -213,7 +227,7 @@ export function MarketChart({
       chartRef.current = null;
       seriesRef.current = null;
     };
-  }, []);
+  }, [theme]);
 
   useEffect(() => {
     const series = seriesRef.current;
@@ -244,7 +258,7 @@ export function MarketChart({
     return () => {
       cancelled = true;
     };
-  }, [bars, family, fibs, timeframe]);
+  }, [bars, family, fibs, theme, timeframe]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -296,7 +310,12 @@ export function MarketChart({
   }
 
   return (
-    <div className="relative h-full min-h-[420px] overflow-hidden bg-[#fbfbfa]">
+    <div
+      className={cn(
+        "relative h-full min-h-0 overflow-hidden",
+        theme === "dark" ? "bg-[#151816]" : "bg-[#fbfbfa]",
+      )}
+    >
       <div ref={containerRef} className="absolute inset-0" />
 
       <svg
@@ -338,7 +357,7 @@ export function MarketChart({
                     fontSize={10}
                     fontWeight={600}
                     paintOrder="stroke"
-                    stroke="#fbfbfa"
+                    stroke={theme === "dark" ? "#151816" : "#fbfbfa"}
                     strokeWidth={4}
                   >
                     {fib.timeframe.toUpperCase()} {fib.direction.toUpperCase()}{" "}
@@ -376,7 +395,7 @@ export function MarketChart({
                       cx={anchor.x}
                       cy={anchor.y}
                       r={6}
-                      fill="#ffffff"
+                      fill={theme === "dark" ? "#151816" : "#ffffff"}
                       stroke={color}
                       strokeWidth={2}
                       onPointerDown={(event) => {
@@ -399,7 +418,14 @@ export function MarketChart({
         )}
       </svg>
 
-      <div className="pointer-events-none absolute bottom-3 left-3 z-20 flex items-center gap-2 rounded-md border border-[#e2e2de] bg-white/92 px-2.5 py-1.5 font-mono text-[9px] text-[#6d7277] shadow-sm backdrop-blur">
+      <div
+        className={cn(
+          "pointer-events-none absolute bottom-3 left-3 z-20 flex items-center gap-2 rounded-md border px-2.5 py-1.5 font-mono text-[9px] shadow-sm backdrop-blur",
+          theme === "dark"
+            ? "border-[#303530] bg-[#181b19]/92 text-[#a8ada8]"
+            : "border-[#e2e2de] bg-white/92 text-[#6d7277]",
+        )}
+      >
         <span className="h-1.5 w-1.5 rounded-full bg-[#47bd78]" />
         {dataLabel}
       </div>

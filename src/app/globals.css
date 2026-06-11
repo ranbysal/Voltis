@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 :root {
-  --background: #d6d6d3;
+  --background: #eae9e7;
   --foreground: #151515;
   --card: #fbfbfa;
   --muted: #73777c;
@@ -46,6 +46,7 @@ input {
 
 button {
   cursor: pointer;
+  color: inherit;
 }
 
 button:disabled {
@@ -76,5 +77,128 @@ button:disabled {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(43, 47, 51, 0.3);
   background-clip: padding-box;
+}
+
+.voltis-workspace,
+.voltis-frame,
+.voltis-drawer {
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease;
+}
+
+.voltis-workspace[data-fullscreen="true"] {
+  min-width: 0;
+  padding: 0;
+}
+
+.voltis-workspace[data-fullscreen="true"] .voltis-frame {
+  max-width: none;
+  border: 0;
+  border-radius: 0;
+}
+
+.voltis-workspace[data-theme="dark"] {
+  background: #0b0d0c;
+  color: #ecece9;
+}
+
+.voltis-workspace[data-theme="dark"] .voltis-frame,
+.voltis-workspace[data-theme="dark"] .voltis-drawer {
+  border-color: #303430;
+  background: #121513;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
+}
+
+.voltis-workspace[data-theme="dark"]
+  :is(
+    [class*="bg-white"],
+    [class*="bg-[#fbfbfa]"],
+    [class*="bg-[#fafaf8]"],
+    [class*="bg-[#f8f8f6]"],
+    [class*="bg-[#f2f2ef]"],
+    [class*="bg-[#f3f3f1]"],
+    [class*="bg-[#efefec]"],
+    [class*="bg-[#ecece8]"],
+    [class*="bg-[#f0f0ed]"]
+  ) {
+  background-color: #181b19 !important;
+}
+
+.voltis-workspace[data-theme="dark"]
+  :is(
+    [class*="bg-[#edf7f0]"],
+    [class*="bg-[#e9f6ed]"],
+    [class*="bg-[#eef8f1]"]
+  ) {
+  background-color: #14251b !important;
+}
+
+.voltis-workspace[data-theme="dark"]
+  :is([class*="bg-[#f8eeee]"], [class*="bg-[#f7eaea]"]) {
+  background-color: #29191b !important;
+}
+
+.voltis-workspace[data-theme="dark"]
+  :is(
+    [class*="border-[#eeeeeb]"],
+    [class*="border-[#e8e8e4]"],
+    [class*="border-[#e5e5e1]"],
+    [class*="border-[#e3e3df]"],
+    [class*="border-[#e2e2de]"],
+    [class*="border-[#e1e1dd]"],
+    [class*="border-[#dfdfda]"],
+    [class*="border-[#dededa]"],
+    [class*="border-[#dcdcd8]"],
+    [class*="border-[#d8d8d4]"],
+    [class*="border-[#b8b8b2]"]
+  ) {
+  border-color: #303430 !important;
+}
+
+.voltis-workspace[data-theme="dark"]
+  :is(
+    [class*="text-[#222]"],
+    [class*="text-[#272727]"],
+    [class*="text-[#333]"],
+    [class*="text-[#444]"],
+    [class*="text-[#555]"],
+    [class*="text-[#666]"],
+    [class*="text-black"]
+  ) {
+  color: #ecece9 !important;
+}
+
+.voltis-workspace[data-theme="dark"]
+  :is(
+    [class*="text-[#6d7277]"],
+    [class*="text-[#72746f]"],
+    [class*="text-[#73777c]"],
+    [class*="text-[#777]"],
+    [class*="text-[#858582]"],
+    [class*="text-[#858782]"],
+    [class*="text-[#888]"],
+    [class*="text-[#8a8a86]"],
+    [class*="text-[#8a8c87]"],
+    [class*="text-[#999]"]
+  ) {
+  color: #9da39d !important;
+}
+
+.voltis-workspace[data-theme="dark"] input,
+.voltis-workspace[data-theme="dark"] textarea {
+  color: #ecece9;
+}
+
+.voltis-workspace[data-theme="dark"] ::placeholder {
+  color: #6d736d;
+}
+
+@media (max-width: 1180px) {
+  .voltis-workspace {
+    min-width: 1180px;
+    padding: 12px;
+  }
 }
 

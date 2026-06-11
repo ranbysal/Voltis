@@ -1,17 +1,5 @@
-import { AccessGate } from "@/components/access-gate";
-import { TradingWorkspace } from "@/components/trading-workspace";
-import {
-  currentSession,
-  isAuthConfigured,
-} from "@/lib/auth";
+import { LandingPage } from "@/components/landing-page";
 
-export const dynamic = "force-dynamic";
-
-export default async function Home() {
-  const session = await currentSession();
-  if (!session) {
-    return <AccessGate configured={isAuthConfigured()} />;
-  }
-
-  return <TradingWorkspace />;
+export default function Home() {
+  return <LandingPage />;
 }
