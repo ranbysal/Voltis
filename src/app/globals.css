@@ -1,7 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #eae9e7;
+  /* Sampled from the landing paper texture (User images/8..png) */
+  --background: #e4e0df;
   --foreground: #151515;
   --card: #fbfbfa;
   --muted: #73777c;
@@ -32,9 +33,11 @@
   --color-down-soft: var(--down-soft);
   --color-chip: var(--chip);
   --color-chip-ink: var(--chip-ink);
-  --font-sans: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
+  --font-sans:
+    var(--font-plex-mono), "IBM Plex Mono", ui-monospace, SFMono-Regular,
+    monospace;
   --font-mono:
-    "Geist Mono", "Geist Mono Fallback", ui-monospace, SFMono-Regular,
+    var(--font-plex-mono), "IBM Plex Mono", ui-monospace, SFMono-Regular,
     monospace;
 }
 
@@ -53,8 +56,7 @@
   body {
     margin: 0;
     color: var(--foreground);
-    font-family: "Geist", "Geist Fallback", ui-sans-serif, system-ui,
-      sans-serif;
+    font-family: var(--font-sans);
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
   }
@@ -170,7 +172,7 @@
 /* ------------------------------------------------------------------ */
 
 .vw {
-  --bg: #ecebe9;
+  --bg: #e4e0df;
   --panel: #f7f7f5;
   --card: #ffffff;
   --card-soft: #f4f4f2;
@@ -231,103 +233,166 @@
 /* Landing page                                                         */
 /* ------------------------------------------------------------------ */
 
-@keyframes v-draw {
-  to {
-    stroke-dashoffset: 0;
-  }
+/* One design unit: the reference composition is a 1672 x 941 canvas that
+   scales to fit the viewport ("contain"). Every landing measurement is
+   expressed as calc(var(--s) * <reference px>) so the page stays a 1:1
+   reproduction of the reference at any viewport size. */
+.v-landing {
+  --s: min(calc(100vw / 1672), calc(100dvh / 941));
 }
 
-.v-draw path,
-.v-draw circle,
-.v-draw ellipse {
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  animation: v-draw 1.4s cubic-bezier(0.45, 0, 0.2, 1) forwards;
+.v-hero-serif {
+  font-family: var(--font-serif), "PP Editorial New", "Didot", serif;
+  font-style: italic;
+  font-weight: 400;
 }
 
-@keyframes v-letter-in {
-  0% {
-    opacity: 0;
-    transform: translateY(0.35em) rotate(4deg);
-    filter: blur(6px);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0) rotate(0deg);
-    filter: blur(0);
-  }
-}
-
-.v-letter {
+/* IBM Plex Mono has no official Condensed cut; the nav links carry a
+   synthetic condensation so they read as the condensed style. */
+.v-condensed {
   display: inline-block;
-  /* backwards (not both): once the intro ends, inline transforms from the
-     cursor interaction must win over the animation's fill. */
-  animation: v-letter-in 900ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
-  transition: transform 450ms cubic-bezier(0.22, 1, 0.36, 1);
+  transform: scaleX(0.86);
+}
+
+/* Masked slide-up reveal: the inner element starts translated fully below
+   the wrapper's overflow:hidden line and is pushed up by the timeline. */
+.v-mask {
+  overflow: hidden;
+}
+
+.v-mask > * {
+  display: inline-block;
   will-change: transform;
 }
 
-/* Lobby-style page wipe transition */
-.v-wipe {
-  position: fixed;
+/* Atmospheric fog: a soft gradient base plus large blurred drifting plumes.
+   Color sits slightly cooler and brighter than the paper so it reads as
+   atmosphere rather than vignette. */
+.v-fog-base {
+  position: absolute;
   inset: 0;
-  z-index: 90;
-  display: grid;
-  place-items: center;
-  background: #111312;
-  color: #eae9e7;
-  transform: translateY(101%);
+  background: linear-gradient(
+    to top,
+    rgba(252, 252, 253, 0.96) 0%,
+    rgba(248, 248, 249, 0.82) 22%,
+    rgba(243, 243, 244, 0.45) 52%,
+    rgba(240, 240, 241, 0.12) 78%,
+    rgba(240, 240, 241, 0) 100%
+  );
+}
+
+.v-fog-plume {
+  position: absolute;
+  border-radius: 9999px;
+  background: radial-gradient(
+    closest-side,
+    rgba(250, 250, 251, 0.85) 0%,
+    rgba(248, 248, 249, 0.5) 45%,
+    rgba(246, 246, 247, 0) 100%
+  );
+  filter: blur(calc(var(--s) * 38));
+  will-change: transform;
+}
+
+/* ------------------------------------------------------------------ */
+/* Boot transition (landing -> dashboard)                               */
+/* ------------------------------------------------------------------ */
+
+/* Pre-paint state while the boot choreography owns the dashboard.
+   data-vboot is set by an inline script in the workspace page before
+   hydration, so the assembled UI never flashes. The master timeline
+   overrides these with inline styles and removes the attribute when the
+   sequence settles. */
+html[data-vboot] [data-boot-region] {
+  opacity: 0;
+  will-change: transform, opacity;
+  /* outline-first: every region reads as an empty outlined container */
+  box-shadow: inset 0 0 0 1px var(--line-soft, #e6e2df);
+}
+
+html[data-vboot] [data-boot-content] {
+  opacity: 0;
+}
+
+html[data-vboot] [data-boot-dot] {
+  transform: scale(0);
+}
+
+html[data-vboot] [data-boot-buy] {
+  opacity: 0;
+}
+
+html[data-vboot] line[data-fib-line],
+html[data-vboot] [data-fib-line-label],
+html[data-vboot] [data-boot-spark] path {
+  opacity: 0;
+}
+
+/* dashboard is interactive only after the sequence settles */
+html[data-vboot] .vw {
   pointer-events: none;
 }
 
-.v-wipe[data-state="enter"] {
-  animation: v-wipe-enter 720ms cubic-bezier(0.76, 0, 0.24, 1) forwards;
-  pointer-events: auto;
+/* the workspace-side frame mounts already drawn behind the route swap */
+#v-bootframe-ws {
+  opacity: 0;
 }
 
-.v-wipe[data-state="exit"] {
-  transform: translateY(0);
-  animation: v-wipe-exit 720ms cubic-bezier(0.76, 0, 0.24, 1) forwards;
+html[data-vboot] #v-bootframe-ws {
+  opacity: 1;
 }
 
-@keyframes v-wipe-enter {
-  0% {
-    transform: translateY(101%);
-    border-radius: 48px 48px 0 0;
-  }
-  100% {
-    transform: translateY(0);
-    border-radius: 0;
-  }
+html[data-vboot] #v-bootframe-ws [data-boot-status] {
+  opacity: 0;
 }
 
-@keyframes v-wipe-exit {
-  0% {
-    transform: translateY(0);
-    border-radius: 0;
-  }
-  100% {
-    transform: translateY(-101%);
-    border-radius: 0 0 48px 48px;
-  }
+/* reduced motion: a simple 250ms crossfade into the assembled dashboard */
+html[data-vboot-reduced] .vw {
+  animation: v-fade-in 250ms ease both;
 }
 
-@keyframes v-wipe-word {
-  0% {
+@keyframes v-fade-in {
+  from {
     opacity: 0;
-    transform: translateY(24px);
   }
-  20%,
-  80% {
+  to {
     opacity: 1;
-    transform: translateY(0);
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(-18px);
   }
 }
 
-.v-wipe-word {
-  animation: v-wipe-word 1.3s ease forwards;
+.v-caret {
+  animation: v-caret 0.8s steps(1) infinite;
+}
+
+@keyframes v-caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* ticker change chips flash their up/down color once after the count-up */
+.v-flash-up {
+  animation: v-flash-chip-up 700ms ease-out 1;
+}
+
+.v-flash-down {
+  animation: v-flash-chip-down 700ms ease-out 1;
+}
+
+@keyframes v-flash-chip-up {
+  0% {
+    background-color: var(--up-soft, rgba(0, 163, 94, 0.18));
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@keyframes v-flash-chip-down {
+  0% {
+    background-color: var(--down-soft, rgba(229, 72, 77, 0.18));
+  }
+  100% {
+    background-color: transparent;
+  }
 }

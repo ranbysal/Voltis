@@ -1,5 +1,7 @@
 "use client";
 
+import gsap from "gsap";
+import { CustomEase } from "gsap/CustomEase";
 import {
   ArrowLeft,
   Bell,
@@ -57,6 +59,15 @@ import {
   saveWorkspace,
 } from "@/lib/persistence";
 import { cn } from "@/lib/utils";
+import {
+  BOOT_FLAG,
+  BOOT_TIME_SCALE,
+  ms,
+  type BootPhase,
+} from "@/components/transition/boot-config";
+import { BootProvider, useBoot, useBootPhase } from "@/components/transition/boot-context";
+import { BootFrame } from "@/components/transition/boot-frame";
+import { useCountUp } from "@/components/transition/use-count-up";
 import { computeEma, MarketChart, type ChartStyle } from "@/components/market-chart";
 import { FibLayersPanel } from "@/components/workspace/fib-layers";
 import {
@@ -69,6 +80,37 @@ import { TradingPanel } from "@/components/workspace/trading-panel";
 import { Dropdown, MenuItem, Sparkline } from "@/components/workspace/ui";
 
 const provider = new ApiExecutionProvider();
+
+gsap.registerPlugin(CustomEase);
+const bootEase = CustomEase.create("v-boot", "0.22,1,0.36,1");
+
+/**
+ * Stat-card value that counts up from 0 during Beat 4b. Outside the boot
+ * sequence it renders the final text immediately.
+ */
+function BootStat({ text }: { text: string }) {
+  const boot = useBoot();
+  const statsReached = useBootPhase("stats");
+  const match = text.match(/^([^0-9-]*)(-?[\d,]+(?:\.\d+)?)(.*)$/);
+  const numeric = match ? Number(match[2].replace(/,/g, "")) : 0;
+  const decimals = match?.[2].split(".")[1]?.length ?? 0;
+  const { text: counted } = useCountUp(numeric, {
+    play: boot.active && statsReached,
+    durationMs: ms(700),
+    decimals,
+  });
+
+  if (!match) {
+    return <>{text}</>;
+  }
+  return (
+    <>
+      {match[1]}
+      {boot.active ? counted : match[2]}
+      {match[3]}
+    </>
+  );
+}
 
 type WorkspaceTheme = "light" | "dark";
 type WorkspacePanel = "positions" | "journal" | "analytics";
@@ -212,7 +254,12 @@ export function TradingWorkspace() {
   const [activeTool, setActiveTool] = useState(0);
   const [showFibPanel, setShowFibPanel] = useState(true);
   const [showTradePanel, setShowTradePanel] = useState(true);
-  const [revealing, setRevealing] = useState(false);
+  const [boot, setBoot] = useState<{ active: boolean; phase: BootPhase }>({
+    active: false,
+    phase: "done",
+  });
+  const [emaReveal, setEmaReveal] = useState(1);
+  const mainRef = useRef<HTMLElement>(null);
   const historyRequestRef = useRef(0);
   const activeContractRef = useRef(DEFAULT_MARKET_META.activeContract);
   const selectionRef = useRef({
@@ -220,23 +267,242 @@ export function TradingWorkspace() {
     timeframe: DEFAULT_WORKSPACE.timeframe,
   });
 
-  /* ----- landing page wipe reveal ----- */
+  /* ----- boot choreography (Beat 4: panel-by-panel assembly) -----
+     The landing page runs Beats 1-3 (scramble-dissolve, registration
+     marks, frame draw) and navigates here behind the drawn frame. One
+     master GSAP timeline assembles the dashboard: outlined containers
+     stagger in, then content populates (counting tickers, candle sweep,
+     EMA/fib stroke-draw, stat count-ups, sparkline draws, dot pops, and
+     the Buy button as the final settle). */
   useEffect(() => {
-    let timeout: number | null = null;
+    let flagged = false;
     try {
-      if (window.sessionStorage.getItem("voltis-wipe")) {
-        window.sessionStorage.removeItem("voltis-wipe");
-        queueMicrotask(() => setRevealing(true));
-        timeout = window.setTimeout(() => setRevealing(false), 780);
-      }
+      flagged = window.sessionStorage.getItem(BOOT_FLAG) !== null;
+      window.sessionStorage.removeItem(BOOT_FLAG);
     } catch {
-      // sessionStorage unavailable; skip the reveal
+      // sessionStorage unavailable; load plain
     }
-    return () => {
-      if (timeout !== null) {
-        window.clearTimeout(timeout);
-      }
-    };
+    const html = document.documentElement;
+    const main = mainRef.current;
+    if (!flagged || !main) {
+      html.removeAttribute("data-vboot");
+      html.removeAttribute("data-vboot-reduced");
+      return;
+    }
+
+    const reduceMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    if (reduceMotion) {
+      // reduced motion: plain 250ms crossfade handled by CSS
+      html.removeAttribute("data-vboot");
+      return;
+    }
+
+    setBoot({ active: true, phase: "containers" });
+    setEmaReveal(0);
+
+    const ctx = gsap.context(() => {
+      const q = gsap.utils.selector(main);
+      const regions = [0, 1, 2, 3, 4, 5, 6]
+        .map((i) => q(`[data-boot-region="${i}"]`)[0])
+        .filter(Boolean);
+      const content = (i: number) =>
+        q(`[data-boot-region="${i}"] [data-boot-content]`);
+
+      const tl = gsap.timeline({
+        onComplete: () => {
+          html.removeAttribute("data-vboot");
+          setBoot({ active: false, phase: "done" });
+          setEmaReveal(1);
+          gsap.set(regions, { clearProps: "all" });
+        },
+      });
+      tl.timeScale(BOOT_TIME_SCALE);
+
+      // ---- 4a: empty outlined containers, staggered in order ----
+      tl.fromTo(
+        regions,
+        { opacity: 0, scale: 0.97, y: 8 },
+        {
+          opacity: 1,
+          scale: 1,
+          y: 0,
+          duration: 0.45,
+          ease: bootEase,
+          stagger: 0.09,
+        },
+        0.05,
+      );
+
+      // ---- 4b: content populates, in the specified order ----
+      // top bar
+      tl.to(
+        content(0),
+        { opacity: 1, duration: 0.3, stagger: 0.05, ease: "power2.out" },
+        0.55,
+      );
+      // ticker cells fade, then prices count up + change flashes
+      tl.to(
+        content(1),
+        { opacity: 1, duration: 0.3, stagger: 0.04, ease: "power2.out" },
+        0.62,
+      );
+      tl.call(
+        () => setBoot((b) => ({ ...b, phase: "tickers" })),
+        [],
+        0.65,
+      );
+      // heading + tab row
+      tl.to(
+        content(2),
+        { opacity: 1, duration: 0.3, stagger: 0.05, ease: "power2.out" },
+        0.72,
+      );
+      // chart: tool rail fades, candlesticks sweep in left -> right
+      tl.to(
+        q('[data-boot-region="3"] [data-boot-content]:not([data-boot-candles])'),
+        { opacity: 1, duration: 0.3, ease: "power2.out" },
+        0.8,
+      );
+      tl.fromTo(
+        q("[data-boot-candles]"),
+        { opacity: 1, clipPath: "inset(0% 100% 0% 0%)" },
+        {
+          clipPath: "inset(0% 0% 0% 0%)",
+          duration: 0.8,
+          ease: "power2.inOut",
+        },
+        0.85,
+      );
+      // fib + trading panel interiors
+      tl.to(
+        content(4),
+        { opacity: 1, duration: 0.3, stagger: 0.05, ease: "power2.out" },
+        0.95,
+      );
+      tl.to(
+        content(5),
+        { opacity: 1, duration: 0.3, stagger: 0.05, ease: "power2.out" },
+        1.05,
+      );
+      // EMAs draw in after the candles (progressive series data)
+      tl.call(
+        () => {
+          const proxy = { p: 0 };
+          gsap.to(proxy, {
+            p: 1,
+            duration: ms(450) / 1000,
+            ease: "power1.inOut",
+            onUpdate: () => setEmaReveal(proxy.p),
+          });
+        },
+        [],
+        1.7,
+      );
+      // Fibonacci levels stroke-draw after the EMAs
+      tl.call(
+        () => {
+          const lines = q("line[data-fib-line]");
+          gsap.set(lines, {
+            strokeDasharray: 1,
+            strokeDashoffset: 1,
+            opacity: 1,
+          });
+          gsap.to(lines, {
+            strokeDashoffset: 0,
+            duration: ms(450) / 1000,
+            stagger: ms(30) / 1000,
+            ease: "power2.out",
+          });
+          gsap.to(q("[data-fib-line-label]"), {
+            opacity: 1,
+            duration: ms(300) / 1000,
+            delay: ms(250) / 1000,
+          });
+        },
+        [],
+        2.1,
+      );
+      // stat cards: interiors fade, numbers count, sparklines stroke-draw
+      tl.to(
+        content(6),
+        { opacity: 1, duration: 0.3, stagger: 0.06, ease: "power2.out" },
+        1.85,
+      );
+      tl.call(() => setBoot((b) => ({ ...b, phase: "stats" })), [], 1.9);
+      tl.call(
+        () => {
+          q("[data-boot-spark] path").forEach((node, index) => {
+            const path = node as SVGPathElement;
+            const length = path.getTotalLength();
+            gsap.fromTo(
+              path,
+              { strokeDasharray: length, strokeDashoffset: length, opacity: 1 },
+              {
+                strokeDashoffset: 0,
+                duration: ms(600) / 1000,
+                delay: (index * ms(80)) / 1000,
+                ease: "power2.out",
+              },
+            );
+          });
+        },
+        [],
+        1.95,
+      );
+      // status line homage: "> SYSTEM_READY" types out once, then fades
+      tl.set(q("[data-boot-status]"), { autoAlpha: 1 }, 2.0);
+      tl.call(
+        () => {
+          const textEl = main.querySelector("[data-boot-status-text]");
+          const proxy = { n: 0 };
+          const message = "> SYSTEM_READY";
+          gsap.to(proxy, {
+            n: message.length,
+            duration: ms(450) / 1000,
+            ease: "none",
+            snap: { n: 1 },
+            onUpdate: () => {
+              if (textEl) {
+                textEl.textContent = message.slice(0, proxy.n);
+              }
+            },
+          });
+        },
+        [],
+        2.0,
+      );
+      // status dots pop with a small bounce
+      tl.fromTo(
+        q("[data-boot-dot]"),
+        { scale: 0 },
+        {
+          scale: 1,
+          duration: 0.3,
+          ease: "back.out(3)",
+          stagger: 0.06,
+          clearProps: "transform",
+        },
+        2.55,
+      );
+      // the Buy button settles in last
+      tl.call(() => setBoot((b) => ({ ...b, phase: "buy" })), [], 2.75);
+      tl.fromTo(
+        q("[data-boot-buy]"),
+        { autoAlpha: 0, scale: 0.95 },
+        { autoAlpha: 1, scale: 1, duration: 0.35, ease: "power2.out" },
+        2.75,
+      );
+      // frame + status fade; interactivity unlocks on complete
+      tl.to(
+        q("#v-bootframe-ws"),
+        { autoAlpha: 0, duration: 0.35, ease: "power1.in" },
+        3.05,
+      );
+    }, main);
+
+    return () => ctx.revert();
   }, []);
 
   /* ----- market data plumbing ----- */
@@ -755,17 +1021,26 @@ export function TradingWorkspace() {
   const detail = FAMILY_DETAILS[workspace.family];
 
   return (
+    <BootProvider value={boot}>
     <main
+      ref={mainRef}
       data-theme={theme}
+      aria-busy={boot.active || undefined}
       className="vw relative flex h-dvh min-w-[1280px] flex-col overflow-hidden"
     >
       {/* ----- top bar ----- */}
-      <header className="flex h-[60px] shrink-0 items-center justify-between border-b border-line bg-panel px-6">
-        <span className="text-[21px] font-semibold tracking-[-0.04em]">
+      <header
+        data-boot-region="0"
+        className="flex h-[60px] shrink-0 items-center justify-between border-b border-line bg-panel px-6"
+      >
+        <span
+          data-boot-content
+          className="text-[21px] font-semibold tracking-[-0.04em]"
+        >
           Voltis
         </span>
 
-        <div className="flex items-center gap-2.5">
+        <div data-boot-content className="flex items-center gap-2.5">
           <div className="flex h-9 w-[280px] items-center gap-2.5 rounded-xl border border-line bg-card px-3.5 transition focus-within:border-ink-3">
             <Search size={14} className="text-ink-2" />
             <input
@@ -849,11 +1124,13 @@ export function TradingWorkspace() {
       </header>
 
       {/* ----- ticker strip ----- */}
-      <TickerStrip
-        livePrice={
-          workspace.family === "NQ" && lastBar ? lastBar.close : null
-        }
-      />
+      <div data-boot-region="1" className="shrink-0">
+        <TickerStrip
+          livePrice={
+            workspace.family === "NQ" && lastBar ? lastBar.close : null
+          }
+        />
+      </div>
 
       {/* ----- body ----- */}
       <section className="flex min-h-0 flex-1">
@@ -878,8 +1155,8 @@ export function TradingWorkspace() {
               </button>
             </div>
           ) : (
-            <>
-              <div className="flex shrink-0 items-center gap-3 pb-3 pt-4">
+            <div data-boot-region="2" className="shrink-0">
+              <div data-boot-content className="flex shrink-0 items-center gap-3 pb-3 pt-4">
                 <h1 className="text-[26px] font-semibold tracking-[-0.03em]">
                   Overview
                 </h1>
@@ -896,7 +1173,7 @@ export function TradingWorkspace() {
                 </span>
               </div>
 
-              <div className="flex shrink-0 items-center justify-between pb-3">
+              <div data-boot-content className="flex shrink-0 items-center justify-between pb-3">
                 <div className="flex items-center gap-1.5">
                   {(
                     [

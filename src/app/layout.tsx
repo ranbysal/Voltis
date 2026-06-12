@@ -1,12 +1,18 @@
 import type { Metadata } from "next";
-import { GeistMono } from "geist/font/mono";
-import { GeistSans } from "geist/font/sans";
-import { Playfair_Display } from "next/font/google";
+import { IBM_Plex_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 
-const playfair = Playfair_Display({
+const plexMono = IBM_Plex_Mono({
   subsets: ["latin"],
-  style: ["italic", "normal"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-plex-mono",
+});
+
+const editorialNew = localFont({
+  src: "../fonts/PPEditorialNew-Italic.woff2",
+  style: "italic",
+  weight: "400",
   variable: "--font-serif",
 });
 
@@ -28,10 +34,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${GeistSans.variable} ${GeistMono.variable} ${playfair.variable}`}
-    >
+    <html lang="en" className={`${plexMono.variable} ${editorialNew.variable}`}>
       <body>{children}</body>
     </html>
   );
