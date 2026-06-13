@@ -15,6 +15,7 @@ import {
 import {
   type PointerEvent as ReactPointerEvent,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -40,6 +41,8 @@ type MarketChartProps = {
   chartStyle?: ChartStyle;
   showEma20?: boolean;
   showEma50?: boolean;
+  /** 0..1 sweep that draws the EMA lines left -> right during the boot. */
+  emaReveal?: number;
   readOnly?: boolean;
   onUpdateFib: (id: string, patch: Partial<FibDrawing>) => void;
 };
@@ -163,6 +166,7 @@ export function MarketChart({
   chartStyle = "candles",
   showEma20 = true,
   showEma50 = true,
+  emaReveal = 1,
   readOnly = false,
   onUpdateFib,
 }: MarketChartProps) {
@@ -174,6 +178,23 @@ export function MarketChart({
   const ema20Ref = useRef<ISeriesApi<"Line", Time> | null>(null);
   const ema50Ref = useRef<ISeriesApi<"Line", Time> | null>(null);
   const [geometry, setGeometry] = useState<FibGeometry[]>([]);
+
+  const ema20Data = useMemo(
+    () =>
+      computeEma(bars, 20).map((point) => ({
+        time: point.time as UTCTimestamp,
+        value: point.value,
+      })),
+    [bars],
+  );
+  const ema50Data = useMemo(
+    () =>
+      computeEma(bars, 50).map((point) => ({
+        time: point.time as UTCTimestamp,
+        value: point.value,
+      })),
+    [bars],
+  );
 
   useEffect(() => {
     const container = containerRef.current;
@@ -188,13 +209,21 @@ export function MarketChart({
     const chartBorder = dark ? "#15201f" : "#e6e5e1";
     const upColor = dark ? "#1fe3c2" : "#04a35e";
     const downColor = dark ? "#cfd8d6" : "#16181a";
+    // Canvas cannot consume a CSS var(), so resolve the app mono stack
+    // (--font-mono -> next/font Plex Mono) to a concrete family list.
+    const plexMono = getComputedStyle(document.documentElement)
+      .getPropertyValue("--font-plex-mono")
+      .trim();
+    const monoFont = `${
+      plexMono ? `${plexMono}, ` : ""
+    }"IBM Plex Mono", ui-monospace, SFMono-Regular, monospace`;
 
     const chart = createChart(container, {
       autoSize: true,
       layout: {
         background: { type: ColorType.Solid, color: chartBackground },
         textColor: chartText,
-        fontFamily: '"Geist Mono", ui-monospace, monospace',
+        fontFamily: monoFont,
         fontSize: 10,
         attributionLogo: false,
       },
@@ -339,18 +368,6 @@ export function MarketChart({
         })),
       );
     }
-    ema20Ref.current?.setData(
-      computeEma(bars, 20).map((point) => ({
-        time: point.time as UTCTimestamp,
-        value: point.value,
-      })),
-    );
-    ema50Ref.current?.setData(
-      computeEma(bars, 50).map((point) => ({
-        time: point.time as UTCTimestamp,
-        value: point.value,
-      })),
-    );
     let cancelled = false;
     queueMicrotask(() => {
       if (!cancelled) {
@@ -363,6 +380,20 @@ export function MarketChart({
       cancelled = true;
     };
   }, [bars, family, fibs, theme, timeframe, chartStyle]);
+
+  // EMA lines draw progressively left -> right after the candles: emaReveal
+  // sweeps 0 -> 1 (driven by the boot timeline) and we feed each line series a
+  // growing slice of points. At rest (emaReveal = 1) the full lines render.
+  useEffect(() => {
+    const ema20s = ema20Ref.current;
+    const ema50s = ema50Ref.current;
+    if (!ema20s || !ema50s) {
+      return;
+    }
+    const reveal = Math.min(1, Math.max(0, emaReveal));
+    ema20s.setData(ema20Data.slice(0, Math.round(ema20Data.length * reveal)));
+    ema50s.setData(ema50Data.slice(0, Math.round(ema50Data.length * reveal)));
+  }, [ema20Data, ema50Data, emaReveal, theme, chartStyle]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -446,6 +477,8 @@ export function MarketChart({
               {lines.map(({ level, price, y }) => (
                 <g key={level}>
                   <line
+                    data-fib-line
+                    pathLength={1}
                     x1={0}
                     x2="100%"
                     y1={y}
@@ -454,12 +487,13 @@ export function MarketChart({
                     strokeWidth={isActive ? 1.35 : 1}
                   />
                   <text
+                    data-fib-line-label
                     x="100%"
                     dx={-92}
                     y={y - 6}
                     textAnchor="end"
                     fill={color}
-                    fontFamily='"Geist Mono", ui-monospace, monospace'
+                    style={{ fontFamily: "var(--font-mono)" }}
                     fontSize={10}
                     fontWeight={600}
                     paintOrder="stroke"

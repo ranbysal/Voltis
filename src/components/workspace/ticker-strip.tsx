@@ -3,6 +3,9 @@
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import { ms } from "@/components/transition/boot-config";
+import { useBoot, useBootPhase } from "@/components/transition/boot-context";
+import { useCountUp } from "@/components/transition/use-count-up";
 
 type TickerQuote = {
   symbol: string;
@@ -43,10 +46,65 @@ const BASE_QUOTES: TickerQuote[] = [
   },
 ];
 
+/**
+ * One ticker cell. During Beat 4b the price counts up from zero (once the
+ * boot phase reaches "tickers"), and the +/- change chip flashes its
+ * up/down colour once the count settles. Outside the boot sequence the cell
+ * renders live values immediately.
+ */
+function TickerCell({ quote, price }: { quote: TickerQuote; price: number }) {
+  const boot = useBoot();
+  const tickersReached = useBootPhase("tickers");
+  const play = boot.active && tickersReached;
+  const [flashed, setFlashed] = useState(false);
+
+  const { text: priceText } = useCountUp(price, {
+    play,
+    durationMs: ms(600),
+    decimals: quote.decimals,
+    onDone: () => setFlashed(true),
+  });
+
+  const positive = quote.change >= 0;
+  const pct = Math.abs((quote.change / price) * 100);
+
+  return (
+    <div
+      data-boot-content
+      className="flex items-center justify-center gap-2 overflow-hidden whitespace-nowrap px-2 font-mono text-[10px]"
+    >
+      <span className="font-semibold text-ink">{quote.symbol}</span>
+      {quote.note ? <span className="text-ink-3">{quote.note}</span> : null}
+      <span className="tabular-nums text-ink">{priceText}</span>
+      <span
+        className={cn(
+          "flex items-center gap-0.5 rounded px-1 tabular-nums",
+          positive ? "text-up" : "text-down",
+          boot.active && flashed && (positive ? "v-flash-up" : "v-flash-down"),
+        )}
+      >
+        {positive ? "+" : "-"}
+        {Math.abs(quote.change).toFixed(2)} ({pct.toFixed(2)}%)
+        {positive ? (
+          <ChevronUp size={11} strokeWidth={2.4} />
+        ) : (
+          <ChevronDown size={11} strokeWidth={2.4} />
+        )}
+      </span>
+    </div>
+  );
+}
+
 export function TickerStrip({ livePrice }: { livePrice?: number | null }) {
+  const boot = useBoot();
   const [quotes, setQuotes] = useState(BASE_QUOTES);
 
+  // Drift the quotes while the workspace is live, but freeze them while the
+  // boot choreography owns the strip so the count-up starts from clean bases.
   useEffect(() => {
+    if (boot.active) {
+      return;
+    }
     const interval = window.setInterval(() => {
       setQuotes((current) =>
         current.map((quote) => {
@@ -60,49 +118,17 @@ export function TickerStrip({ livePrice }: { livePrice?: number | null }) {
       );
     }, 3200);
     return () => window.clearInterval(interval);
-  }, []);
+  }, [boot.active]);
 
   return (
     <div className="grid h-11 shrink-0 grid-cols-6 divide-x divide-line border-b border-line bg-panel">
-      {quotes.map((quote, index) => {
-        const price =
-          index === 0 && livePrice ? livePrice : quote.price;
-        const positive = quote.change >= 0;
-        const pct = Math.abs((quote.change / price) * 100);
-        return (
-          <div
-            key={quote.symbol}
-            className="flex items-center justify-center gap-2 overflow-hidden whitespace-nowrap px-2 font-mono text-[10px]"
-          >
-            <span className="font-semibold text-ink">
-              {quote.symbol}
-            </span>
-            {quote.note ? (
-              <span className="text-ink-3">{quote.note}</span>
-            ) : null}
-            <span className="tabular-nums text-ink">
-              {price.toLocaleString("en-US", {
-                minimumFractionDigits: quote.decimals,
-                maximumFractionDigits: quote.decimals,
-              })}
-            </span>
-            <span
-              className={cn(
-                "flex items-center gap-0.5 tabular-nums",
-                positive ? "text-up" : "text-down",
-              )}
-            >
-              {positive ? "+" : "-"}
-              {Math.abs(quote.change).toFixed(2)} ({pct.toFixed(2)}%)
-              {positive ? (
-                <ChevronUp size={11} strokeWidth={2.4} />
-              ) : (
-                <ChevronDown size={11} strokeWidth={2.4} />
-              )}
-            </span>
-          </div>
-        );
-      })}
+      {quotes.map((quote, index) => (
+        <TickerCell
+          key={quote.symbol}
+          quote={quote}
+          price={index === 0 && livePrice ? livePrice : quote.price}
+        />
+      ))}
     </div>
   );
 }

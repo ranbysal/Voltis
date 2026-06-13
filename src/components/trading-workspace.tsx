@@ -275,13 +275,23 @@ export function TradingWorkspace() {
      EMA/fib stroke-draw, stat count-ups, sparkline draws, dot pops, and
      the Buy button as the final settle). */
   useEffect(() => {
+    // Read but do NOT consume the flag here: under React Strict Mode this
+    // effect mounts -> cleans up -> remounts, and removing the flag on the
+    // first pass would make the remount skip the boot. The flag is cleared
+    // once the sequence actually commits (reduced branch / timeline onComplete).
     let flagged = false;
     try {
       flagged = window.sessionStorage.getItem(BOOT_FLAG) !== null;
-      window.sessionStorage.removeItem(BOOT_FLAG);
     } catch {
       // sessionStorage unavailable; load plain
     }
+    const clearFlag = () => {
+      try {
+        window.sessionStorage.removeItem(BOOT_FLAG);
+      } catch {
+        // ignore
+      }
+    };
     const html = document.documentElement;
     const main = mainRef.current;
     if (!flagged || !main) {
@@ -294,13 +304,24 @@ export function TradingWorkspace() {
       "(prefers-reduced-motion: reduce)",
     ).matches;
     if (reduceMotion) {
-      // reduced motion: plain 250ms crossfade handled by CSS
+      // reduced motion: a plain ~250ms crossfade (CSS via data-vboot-reduced)
+      // straight into the fully assembled dashboard — no scramble/draw-in.
+      clearFlag();
       html.removeAttribute("data-vboot");
-      return;
+      const cleanup = window.setTimeout(
+        () => html.removeAttribute("data-vboot-reduced"),
+        320,
+      );
+      return () => window.clearTimeout(cleanup);
     }
 
-    setBoot({ active: true, phase: "containers" });
-    setEmaReveal(0);
+    // Activate the boot state on the next frame (post-mount) rather than
+    // synchronously in the effect body — the GSAP timeline below drives the
+    // DOM directly and is independent of this React state.
+    const activateRaf = requestAnimationFrame(() => {
+      setBoot({ active: true, phase: "containers" });
+      setEmaReveal(0);
+    });
 
     const ctx = gsap.context(() => {
       const q = gsap.utils.selector(main);
@@ -312,6 +333,7 @@ export function TradingWorkspace() {
 
       const tl = gsap.timeline({
         onComplete: () => {
+          clearFlag();
           html.removeAttribute("data-vboot");
           setBoot({ active: false, phase: "done" });
           setEmaReveal(1);
@@ -434,7 +456,7 @@ export function TradingWorkspace() {
       tl.call(
         () => {
           q("[data-boot-spark] path").forEach((node, index) => {
-            const path = node as SVGPathElement;
+            const path = node as unknown as SVGPathElement;
             const length = path.getTotalLength();
             gsap.fromTo(
               path,
@@ -502,7 +524,10 @@ export function TradingWorkspace() {
       );
     }, main);
 
-    return () => ctx.revert();
+    return () => {
+      cancelAnimationFrame(activateRaf);
+      ctx.revert();
+    };
   }, []);
 
   /* ----- market data plumbing ----- */
@@ -1065,7 +1090,10 @@ export function TradingWorkspace() {
             label={
               <span className="relative">
                 <Bell size={15} />
-                <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-down" />
+                <span
+                  data-boot-dot
+                  className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-down"
+                />
               </span>
             }
             className="h-9 w-12 justify-center"
@@ -1089,7 +1117,10 @@ export function TradingWorkspace() {
                     Yazan
                   </span>
                   <span className="flex items-center gap-1 text-[8px] text-ink-2">
-                    <span className="h-1.5 w-1.5 rounded-full bg-up" />
+                    <span
+                      data-boot-dot
+                      className="h-1.5 w-1.5 rounded-full bg-up"
+                    />
                     Online
                   </span>
                 </span>
@@ -1344,13 +1375,19 @@ export function TradingWorkspace() {
                   </button>
                 </div>
               </div>
-            </>
+            </div>
           )}
 
           {/* chart card */}
-          <div className="relative flex min-h-0 flex-1 overflow-hidden rounded-xl border border-line bg-card">
+          <div
+            data-boot-region="3"
+            className="relative flex min-h-0 flex-1 overflow-hidden rounded-xl border border-line bg-card"
+          >
             {/* tool rail */}
-            <aside className="flex w-11 shrink-0 flex-col items-center gap-0.5 overflow-y-auto border-r border-line py-2">
+            <aside
+              data-boot-content
+              className="flex w-11 shrink-0 flex-col items-center gap-0.5 overflow-y-auto border-r border-line py-2"
+            >
               {CHART_TOOLS.map((tool, index) => (
                 <button
                   key={tool.label}
@@ -1370,13 +1407,14 @@ export function TradingWorkspace() {
             </aside>
 
             {/* chart + legend */}
-            <div className="relative min-w-0 flex-1">
+            <div data-boot-content data-boot-candles className="relative min-w-0 flex-1">
               <div className="pointer-events-none absolute left-3 top-2.5 z-20 select-none">
                 <div className="flex items-center gap-2 font-mono text-[10px]">
                   <span className="font-semibold text-ink">
                     {symbolLabel} · {workspace.timeframe} · {detail.exchange}
                   </span>
                   <span
+                    data-boot-dot
                     className={cn(
                       "h-1.5 w-1.5 rounded-full",
                       marketLoading || marketStreamStatus === "connecting"
@@ -1458,6 +1496,7 @@ export function TradingWorkspace() {
                 chartStyle={chartStyle}
                 showEma20={showEma20}
                 showEma50={showEma50}
+                emaReveal={emaReveal}
                 onUpdateFib={updateFib}
               />
 
@@ -1482,7 +1521,7 @@ export function TradingWorkspace() {
           </div>
 
           {/* stats footer */}
-          <div className="grid shrink-0 grid-cols-4 gap-3 pt-3">
+          <div data-boot-region="6" className="grid shrink-0 grid-cols-4 gap-3 pt-3">
             {(
               [
                 ["Account Balance", "$50,000.00", undefined, SPARK_UP],
@@ -1503,7 +1542,7 @@ export function TradingWorkspace() {
                 key={label}
                 className="flex h-[64px] items-center justify-between rounded-xl border border-line bg-card px-4"
               >
-                <div>
+                <div data-boot-content>
                   <p className="text-[9px] text-ink-3">{label}</p>
                   <p
                     className={cn(
@@ -1511,13 +1550,15 @@ export function TradingWorkspace() {
                       tone === "up" && "text-up",
                     )}
                   >
-                    {value}
+                    <BootStat text={value} />
                   </p>
                 </div>
-                <Sparkline
-                  data={[...spark]}
-                  color={tone === "up" ? "var(--up)" : "var(--ink)"}
-                />
+                <span className="contents" data-boot-spark>
+                  <Sparkline
+                    data={[...spark]}
+                    color={tone === "up" ? "var(--up)" : "var(--ink)"}
+                  />
+                </span>
               </div>
             ))}
           </div>
@@ -1525,6 +1566,7 @@ export function TradingWorkspace() {
 
         {/* fib layers column */}
         {showFibPanel ? (
+          <div data-boot-region="4" className="flex shrink-0">
           <FibLayersPanel
             family={workspace.family}
             fibs={workspace.fibs}
@@ -1544,6 +1586,7 @@ export function TradingWorkspace() {
             onExport={exportFibs}
             onClose={() => setShowFibPanel(false)}
           />
+          </div>
         ) : (
           <button
             onClick={() => setShowFibPanel(true)}
@@ -1556,6 +1599,7 @@ export function TradingWorkspace() {
 
         {/* trading panel column */}
         {showTradePanel ? (
+          <div data-boot-region="5" className="flex shrink-0">
           <TradingPanel
             family={workspace.family}
             size={workspace.executionSize}
@@ -1565,6 +1609,7 @@ export function TradingWorkspace() {
             onSubmit={submitOrder}
             onClose={() => setShowTradePanel(false)}
           />
+          </div>
         ) : (
           <button
             onClick={() => setShowTradePanel(true)}
@@ -1576,14 +1621,8 @@ export function TradingWorkspace() {
         )}
       </section>
 
-      {/* landing wipe reveal */}
-      {revealing ? (
-        <div className="v-wipe" data-state="exit">
-          <span className="v-wipe-word text-[13px] font-medium tracking-[0.42em] text-[#eae9e7]">
-            VOLTIS
-          </span>
-        </div>
-      ) : null}
+      <BootFrame id="v-bootframe-ws" />
     </main>
+    </BootProvider>
   );
 }

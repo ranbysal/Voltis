@@ -137,7 +137,10 @@ export function LandingPage() {
       "(prefers-reduced-motion: reduce)",
     ).matches;
     if (reduceMotion || !root) {
-      // 250ms crossfade instead of the full choreography
+      // 250ms crossfade instead of the full choreography. The dashboard mounts
+      // via a client-side route change, so the pre-paint script never runs —
+      // set the reduced-motion flag here so the dashboard fades in assembled.
+      document.documentElement.setAttribute("data-vboot-reduced", "1");
       gsap.to(root ?? "main", {
         autoAlpha: 0,
         duration: 0.25,
@@ -146,6 +149,11 @@ export function LandingPage() {
       });
       return;
     }
+
+    // Hide the dashboard before it mounts. router.push is a client-side nav, so
+    // the workspace pre-paint script does not execute; setting data-vboot on the
+    // shared document carries the "hidden until boot" state across the handoff.
+    document.documentElement.setAttribute("data-vboot", "1");
 
     // Beat 1: text decode-scramble (RAF-driven, same preset clock)
     setScrambling(true);

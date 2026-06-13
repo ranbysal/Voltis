@@ -2,13 +2,27 @@
 
 import { ArrowLeft, LockKeyhole } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BrandMark } from "@/components/brand-mark";
+import { BOOT_FLAG } from "@/components/transition/boot-config";
 
 export function AccessGate({ configured }: { configured: boolean }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // The landing hands off a boot flag before routing to /workspace. When the
+  // visitor lands on the gate instead of the dashboard, no boot runs, so clear
+  // the stale flag + pre-paint attributes to avoid a mis-triggered transition.
+  useEffect(() => {
+    try {
+      window.sessionStorage.removeItem(BOOT_FLAG);
+    } catch {
+      // sessionStorage unavailable; nothing to clear
+    }
+    document.documentElement.removeAttribute("data-vboot");
+    document.documentElement.removeAttribute("data-vboot-reduced");
+  }, []);
 
   async function signIn(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -32,7 +46,7 @@ export function AccessGate({ configured }: { configured: boolean }) {
   }
 
   return (
-    <main className="relative grid min-h-dvh place-items-center bg-[#eae9e7] px-6 text-[#151515]">
+    <main className="relative grid min-h-dvh place-items-center bg-[#e4e0df] px-6 text-[#151515]">
       <Link
         href="/"
         className="absolute left-6 top-6 flex items-center gap-2 text-[10px] text-[#6f716c] transition hover:text-black"

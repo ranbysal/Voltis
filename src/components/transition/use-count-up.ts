@@ -12,6 +12,11 @@ const format = (value: number, decimals: number) =>
  * Tweens 0 -> value with locale formatting once `play` flips true.
  * When `play` is false the final value renders immediately, so callers
  * can use it unconditionally outside the boot sequence.
+ *
+ * The animation is driven entirely by a RAF loop that advances a 0..1
+ * `progress` value; the displayed number is derived from the live `value`
+ * prop during render, so live updates keep flowing when not playing without
+ * any setState-in-effect.
  */
 export function useCountUp(
   value: number,
@@ -27,44 +32,42 @@ export function useCountUp(
     onDone?: () => void;
   },
 ) {
-  const [text, setText] = useState(() => format(play ? 0 : value, decimals));
-  const [done, setDone] = useState(!play);
-  const startedRef = useRef(false);
-  const valueRef = useRef(value);
-  valueRef.current = value;
+  const [progress, setProgress] = useState(play ? 0 : 1);
+  const [prevPlay, setPrevPlay] = useState(play);
   const onDoneRef = useRef(onDone);
-  onDoneRef.current = onDone;
+
+  // Reset the tween whenever `play` toggles (the React-sanctioned
+  // "adjust state during render" pattern — no effect, so no cascade).
+  if (play !== prevPlay) {
+    setPrevPlay(play);
+    setProgress(play ? 0 : 1);
+  }
+
+  // Keep the latest completion callback for the RAF closure to read.
+  useEffect(() => {
+    onDoneRef.current = onDone;
+  });
 
   useEffect(() => {
-    if (!play || startedRef.current) {
+    if (!play) {
       return;
     }
-    startedRef.current = true;
     const start = performance.now();
-    let raf = 0;
-
-    const tick = (now: number) => {
+    let raf = requestAnimationFrame(function tick(now: number) {
       const p = Math.min(1, (now - start) / durationMs);
-      const eased = 1 - (1 - p) ** 3;
-      setText(format(valueRef.current * eased, decimals));
+      setProgress(p);
       if (p < 1) {
         raf = requestAnimationFrame(tick);
       } else {
-        setDone(true);
         onDoneRef.current?.();
       }
-    };
-
-    raf = requestAnimationFrame(tick);
+    });
     return () => cancelAnimationFrame(raf);
-  }, [play, durationMs, decimals]);
+  }, [play, durationMs]);
 
-  // outside the boot path keep tracking live values
-  useEffect(() => {
-    if (done && !play) {
-      setText(format(value, decimals));
-    }
-  }, [value, decimals, done, play]);
+  const eased = 1 - (1 - progress) ** 3;
+  const text = format(play ? value * eased : value, decimals);
+  const done = !play || progress >= 1;
 
   return { text, done };
 }

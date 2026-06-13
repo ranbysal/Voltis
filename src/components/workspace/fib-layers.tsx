@@ -38,7 +38,7 @@ export function FibLayersPanel({
 
   return (
     <aside className="flex w-[176px] shrink-0 flex-col border-l border-line bg-panel">
-      <div className="flex items-center justify-between px-3.5 pb-2 pt-4">
+      <div data-boot-content className="flex items-center justify-between px-3.5 pb-2 pt-4">
         <span className="text-[13px] font-semibold tracking-[-0.02em]">
           Fib Layers
         </span>
@@ -51,7 +51,7 @@ export function FibLayersPanel({
         </button>
       </div>
 
-      <div className="mx-3 grid grid-cols-2 rounded-lg border border-line bg-card-soft p-0.5">
+      <div data-boot-content className="mx-3 grid grid-cols-2 rounded-lg border border-line bg-card-soft p-0.5">
         {(["buy", "sell"] as const).map((mode) => (
           <button
             key={mode}
@@ -70,7 +70,7 @@ export function FibLayersPanel({
         ))}
       </div>
 
-      <div className="flex items-center justify-between px-3.5 pb-1 pt-3">
+      <div data-boot-content className="flex items-center justify-between px-3.5 pb-1 pt-3">
         <span className="text-[9px] text-ink-3">
           Visible Overlays
         </span>
@@ -94,7 +94,7 @@ export function FibLayersPanel({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 pb-3">
+      <div data-boot-content className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 pb-3">
         {TIMEFRAMES.map((timeframe) => {
           const fib = fibs.find(
             (item) =>
@@ -165,7 +165,7 @@ export function FibLayersPanel({
         })}
       </div>
 
-      <div className="border-t border-line px-3.5 py-3">
+      <div data-boot-content className="border-t border-line px-3.5 py-3">
         <div className="flex items-center justify-between gap-2">
           <div>
             <p className="text-[8px] text-ink-3">Buying Power</p>

@@ -204,7 +204,7 @@ export function TradingPanel({
 
   return (
     <aside className="flex w-[272px] shrink-0 flex-col border-l border-line bg-panel">
-      <div className="flex items-center justify-between px-4 pb-2 pt-4">
+      <div data-boot-content className="flex items-center justify-between px-4 pb-2 pt-4">
         <span className="flex items-center gap-2 text-[13px] font-semibold tracking-[-0.02em]">
           <ArrowUpFromLine size={13} className="text-ink-2" />
           Trading Panel
@@ -218,7 +218,7 @@ export function TradingPanel({
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+      <div data-boot-content className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
         <div className="grid grid-cols-2 rounded-lg border border-line bg-card-soft p-0.5">
           {(["mini", "micro"] as const).map((mode) => (
             <button
@@ -625,6 +625,7 @@ export function TradingPanel({
         </div>
 
         <button
+          data-boot-buy
           onClick={submit}
           disabled={submitting || accounts.length === 0}
           className={cn(
@@ -645,8 +646,8 @@ export function TradingPanel({
         ) : null}
       </div>
 
-      <div className="flex items-center gap-2 border-t border-line px-4 py-3 text-[9px]">
-        <span className="h-1.5 w-1.5 rounded-full bg-up" />
+      <div data-boot-content className="flex items-center gap-2 border-t border-line px-4 py-3 text-[9px]">
+        <span data-boot-dot className="h-1.5 w-1.5 rounded-full bg-up" />
         <span className="font-medium text-ink">Market</span>
         <span className="text-ink-3">|</span>
         <span className="text-ink-2">NY</span>
