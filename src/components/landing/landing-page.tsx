@@ -11,7 +11,6 @@ import {
 } from "@/components/transition/boot-config";
 import { BootFrame } from "@/components/transition/boot-frame";
 import { BackgroundTexture } from "./background-texture";
-import { FogOverlay } from "./fog-overlay";
 import { HeroPortrait } from "./hero-portrait";
 import { HeroTypography } from "./hero-typography";
 import { IntroGrid } from "./intro-grid";
@@ -31,7 +30,7 @@ export function LandingPage() {
     router.prefetch("/workspace");
   }, [router]);
 
-  /* ----- page-load reveal (grid blocks / hero scale / masked nav / fog) ----- */
+  /* ----- page-load reveal (grid blocks / hero scale / masked nav) ----- */
   useEffect(() => {
     const root = rootRef.current;
     if (!root) {
@@ -51,7 +50,6 @@ export function LandingPage() {
 
       const blocks = gsap.utils.toArray<HTMLElement>("[data-intro-block]");
       const navItems = gsap.utils.toArray<HTMLElement>("[data-nav-item]");
-      const plumes = gsap.utils.toArray<HTMLElement>(".v-fog-plume");
 
       gsap.set("#v-hero", {
         scale: 1.1,
@@ -59,7 +57,6 @@ export function LandingPage() {
         transformOrigin: "50% 50%",
       });
       gsap.set(navItems, { yPercent: 100 });
-      gsap.set("#v-fog", { autoAlpha: 0 });
 
       const tl = gsap.timeline();
 
@@ -93,22 +90,6 @@ export function LandingPage() {
         1.0,
       );
 
-      // Phase 4 (1.5s - 2.5s): fog settles in.
-      tl.to(
-        "#v-fog",
-        { autoAlpha: 1, duration: 1.0, ease: "sine.inOut" },
-        1.5,
-      );
-
-      plumes.forEach((plume, i) => {
-        gsap.to(plume, {
-          xPercent: (i % 2 === 0 ? -1 : 1) * (4 + i * 1.6),
-          duration: 16 + i * 7,
-          repeat: -1,
-          yoyo: true,
-          ease: "sine.inOut",
-        });
-      });
     }, root);
 
     return () => ctx.revert();
@@ -178,7 +159,6 @@ export function LandingPage() {
       },
       0.15,
     );
-    tl.to("#v-fog", { autoAlpha: 0, duration: 0.6, ease: "power1.in" }, 0.2);
     tl.to(
       "#v-texture",
       { autoAlpha: 0, duration: 0.9, ease: "power1.in" },
@@ -243,7 +223,6 @@ export function LandingPage() {
         <Navbar onNavigate={startBootTransition} scrambling={scrambling} />
       </div>
 
-      <FogOverlay />
       <BootFrame id="v-bootframe" />
       <IntroGrid />
     </main>

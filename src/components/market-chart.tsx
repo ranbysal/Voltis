@@ -341,8 +341,7 @@ export function MarketChart({
 
   useEffect(() => {
     const series = seriesRef.current;
-    const chart = chartRef.current;
-    if (!series || !chart || bars.length === 0) {
+    if (!series || bars.length === 0) {
       return;
     }
 
@@ -368,18 +367,50 @@ export function MarketChart({
         })),
       );
     }
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (!cancelled) {
-        setGeometry(
-          buildFibGeometry(chart, series, fibs, timeframe, theme === "dark"),
-        );
+  }, [bars, family, chartStyle]);
+
+  // Keep the Fibonacci overlay glued to the candles. lightweight-charts
+  // repaints its canvas on every pan/zoom/scale frame, but the SVG overlay is
+  // positioned from priceToCoordinate/timeToCoordinate, so it has to be
+  // recomputed on those same frames. Previously geometry only refreshed when
+  // React props changed, so while dragging the levels froze and then snapped
+  // back the moment an unrelated re-render (a live bar tick) landed. A
+  // per-frame sync loop recomputes the coordinates and only commits to React
+  // state when something actually moved, so the levels track the chart
+  // seamlessly while idle frames stay free.
+  useEffect(() => {
+    const chart = chartRef.current;
+    const series = seriesRef.current;
+    if (!chart || !series) {
+      return;
+    }
+
+    let raf = 0;
+    let prevKey = "";
+    const sync = () => {
+      const next = buildFibGeometry(
+        chart,
+        series,
+        fibs,
+        timeframe,
+        theme === "dark",
+      );
+      const key = next
+        .map(
+          (g) =>
+            `${g.fib.id}:${g.startX},${g.endX},${g.startY},${g.endY}:` +
+            g.lines.map((line) => line.y).join(","),
+        )
+        .join("|");
+      if (key !== prevKey) {
+        prevKey = key;
+        setGeometry(next);
       }
-    });
-    return () => {
-      cancelled = true;
+      raf = requestAnimationFrame(sync);
     };
-  }, [bars, family, fibs, theme, timeframe, chartStyle]);
+    raf = requestAnimationFrame(sync);
+    return () => cancelAnimationFrame(raf);
+  }, [fibs, timeframe, theme, chartStyle]);
 
   // EMA lines draw progressively left -> right after the candles: emaReveal
   // sweeps 0 -> 1 (driven by the boot timeline) and we feed each line series a
