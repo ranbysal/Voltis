@@ -173,9 +173,9 @@
 
 .vw {
   --bg: #e4e0df;
-  --panel: #f7f7f5;
-  --card: #ffffff;
-  --card-soft: #f4f4f2;
+  --panel: #e4e0df;
+  --card: #e4e0df;
+  --card-soft: #e4e0df;
   --line: #e6e5e1;
   --line-soft: #efeeeb;
   --ink: #131614;
@@ -188,7 +188,7 @@
   --chip: #131614;
   --chip-ink: #ffffff;
   --glow: 0 0 0 0 rgba(0, 0, 0, 0);
-  --chart-bg: #fcfcfb;
+  --chart-bg: #e4e0df;
   background: var(--bg);
   color: var(--ink);
 }
@@ -203,13 +203,13 @@
   --ink: #e6fbf7;
   --ink-2: #8fa9a4;
   --ink-3: #58716d;
-  --up: #1fe3c2;
-  --up-soft: rgba(31, 227, 194, 0.1);
+  --up: #00FFEF;
+  --up-soft: rgba(0, 255, 239, 0.1);
   --down: #ff5c64;
   --down-soft: rgba(255, 92, 100, 0.12);
   --chip: #0d2f2a;
-  --chip-ink: #2af0d3;
-  --glow: 0 0 22px rgba(31, 227, 194, 0.22);
+  --chip-ink: #00FFEF;
+  --glow: 0 0 22px rgba(0, 255, 239, 0.22);
   --chart-bg: #060b0b;
 }
 
@@ -221,7 +221,7 @@
 }
 
 .vw[data-theme="dark"] ::-webkit-scrollbar-thumb {
-  background: rgba(31, 227, 194, 0.22);
+  background: rgba(0, 255, 239, 0.22);
   background-clip: padding-box;
 }
 

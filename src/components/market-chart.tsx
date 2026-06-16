@@ -78,7 +78,7 @@ const DARK_TF_STYLE: Record<
   Timeframe,
   { buy: string; sell: string; opacity: number }
 > = {
-  "5m": { buy: "#1fe3c2", sell: "#ff5c64", opacity: 1 },
+  "5m": { buy: "#00FFEF", sell: "#ff5c64", opacity: 1 },
   "10m": { buy: "#2bd9bc", sell: "#f56b72", opacity: 0.94 },
   "30m": { buy: "#36cfb6", sell: "#ea7a80", opacity: 0.88 },
   "1h": { buy: "#41c4b0", sell: "#dd888d", opacity: 0.8 },
@@ -203,11 +203,11 @@ export function MarketChart({
     }
 
     const dark = theme === "dark";
-    const chartBackground = dark ? "#060b0b" : "#fcfcfb";
+    const chartBackground = dark ? "#060b0b" : "#e4e0df";
     const chartText = dark ? "#58716d" : "#54585d";
     const chartGrid = dark ? "#101a19" : "#efeeeb";
     const chartBorder = dark ? "#15201f" : "#e6e5e1";
-    const upColor = dark ? "#1fe3c2" : "#04a35e";
+    const upColor = dark ? "#00FFEF" : "#04a35e";
     const downColor = dark ? "#cfd8d6" : "#16181a";
     // Canvas cannot consume a CSS var(), so resolve the app mono stack
     // (--font-mono -> next/font Plex Mono) to a concrete family list.
@@ -248,7 +248,7 @@ export function MarketChart({
         mode: CrosshairMode.Normal,
         vertLine: {
           color: dark
-            ? "rgba(31, 227, 194, 0.35)"
+            ? "rgba(0, 255, 239, 0.35)"
             : "rgba(31, 34, 38, 0.38)",
           width: 1,
           style: LineStyle.Dashed,
@@ -256,7 +256,7 @@ export function MarketChart({
         },
         horzLine: {
           color: dark
-            ? "rgba(31, 227, 194, 0.35)"
+            ? "rgba(0, 255, 239, 0.35)"
             : "rgba(31, 34, 38, 0.38)",
           width: 1,
           style: LineStyle.Dashed,
@@ -479,7 +479,7 @@ export function MarketChart({
     <div
       className={cn(
         "relative h-full min-h-0 overflow-hidden",
-        theme === "dark" ? "bg-[#060b0b]" : "bg-[#fcfcfb]",
+        theme === "dark" ? "bg-[#060b0b]" : "bg-[#e4e0df]",
       )}
     >
       <div ref={containerRef} className="absolute inset-0" />
@@ -528,7 +528,7 @@ export function MarketChart({
                     fontSize={10}
                     fontWeight={600}
                     paintOrder="stroke"
-                    stroke={theme === "dark" ? "#060b0b" : "#fcfcfb"}
+                    stroke={theme === "dark" ? "#060b0b" : "#e4e0df"}
                     strokeWidth={4}
                   >
                     {level}{" "}
@@ -594,13 +594,13 @@ export function MarketChart({
           "pointer-events-none absolute bottom-3 left-3 z-20 flex items-center gap-2 rounded-md border px-2.5 py-1.5 font-mono text-[9px] shadow-sm backdrop-blur",
           theme === "dark"
             ? "border-[#15201f] bg-[#0b1212]/92 text-[#8fa9a4]"
-            : "border-[#e6e5e1] bg-white/92 text-[#6d7277]",
+            : "border-[#e6e5e1] bg-[#e4e0df]/92 text-[#6d7277]",
         )}
       >
         <span
           className={cn(
             "h-1.5 w-1.5 rounded-full",
-            theme === "dark" ? "bg-[#1fe3c2]" : "bg-[#04a35e]",
+            theme === "dark" ? "bg-[#00FFEF]" : "bg-[#04a35e]",
           )}
         />
         {dataLabel}

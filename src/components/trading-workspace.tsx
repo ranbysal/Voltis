@@ -15,7 +15,6 @@ import {
   Moon,
   MoveDiagonal,
   Ruler,
-  Search,
   Smile,
   Spline,
   Sun,
@@ -1066,14 +1065,6 @@ export function TradingWorkspace() {
         </span>
 
         <div data-boot-content className="flex items-center gap-2.5">
-          <div className="flex h-9 w-[280px] items-center gap-2.5 rounded-xl border border-line bg-card px-3.5 transition focus-within:border-ink-3">
-            <Search size={14} className="text-ink-2" />
-            <input
-              placeholder="Search Dashboard"
-              className="h-full w-full min-w-0 bg-transparent text-[11px] text-ink outline-none placeholder:text-ink-3"
-            />
-          </div>
-
           <button
             onClick={() =>
               setTheme((current) => (current === "light" ? "dark" : "light"))

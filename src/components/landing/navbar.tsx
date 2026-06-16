@@ -18,12 +18,12 @@ export function Navbar({
 }) {
   return (
     <header className="absolute inset-x-0 top-0 z-50">
-      <div className="v-mask absolute" style={{ left: u(33), top: u(19) }}>
+      <div className="v-mask absolute" style={{ left: u(18), top: u(19) }}>
         <span
           data-nav-item
           aria-label="VOLTIS"
           className="block select-none font-medium text-[#1f1f21]"
-          style={{ fontSize: u(44), letterSpacing: "0.12em", lineHeight: 1.1 }}
+          style={{ fontSize: u(44), letterSpacing: "0.18em", lineHeight: 1.1 }}
         >
           <ScrambleText
             text="VOLTIS"
@@ -38,7 +38,7 @@ export function Navbar({
       </div>
       <nav
         className="absolute flex items-baseline text-[#2c2c2e]"
-        style={{ right: u(46), top: u(28), gap: u(46) }}
+        style={{ right: u(28), top: u(28), gap: u(46) }}
       >
         <div className="v-mask">
           <button
@@ -46,7 +46,7 @@ export function Navbar({
             aria-label="Viewer"
             onClick={() => onNavigate("/workspace")}
             className="transition-colors duration-200 hover:text-black"
-            style={{ fontSize: u(27), letterSpacing: "0.02em", lineHeight: 1.2 }}
+            style={{ fontSize: u(22), letterSpacing: "0.02em", lineHeight: 1.2 }}
           >
             <span className="v-condensed" style={{ transformOrigin: "100% 50%" }}>
               <ScrambleText
@@ -67,7 +67,7 @@ export function Navbar({
             aria-label="Login"
             onClick={() => onNavigate("/workspace")}
             className="transition-colors duration-200 hover:text-black"
-            style={{ fontSize: u(27), letterSpacing: "0.02em", lineHeight: 1.2 }}
+            style={{ fontSize: u(22), letterSpacing: "0.02em", lineHeight: 1.2 }}
           >
             <span className="v-condensed" style={{ transformOrigin: "100% 50%" }}>
               <ScrambleText

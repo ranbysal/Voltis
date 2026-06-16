@@ -54,7 +54,7 @@ export function AccessGate({ configured }: { configured: boolean }) {
         <ArrowLeft size={13} />
         Back to Voltis
       </Link>
-      <div className="w-full max-w-sm rounded-2xl border border-[#dededa] bg-[#fbfbfa] p-7 shadow-[0_30px_100px_rgba(0,0,0,0.16)]">
+      <div className="w-full max-w-sm rounded-2xl border border-[#dededa] bg-[#e4e0df] p-7 shadow-[0_30px_100px_rgba(0,0,0,0.16)]">
         <div className="flex items-center gap-3">
           <BrandMark />
           <div>
@@ -75,7 +75,7 @@ export function AccessGate({ configured }: { configured: boolean }) {
             >
               Access password
             </label>
-            <div className="mt-2 flex items-center rounded-lg border border-[#dededa] bg-white px-3 focus-within:border-[#111]">
+            <div className="mt-2 flex items-center rounded-lg border border-[#dededa] bg-[#e4e0df] px-3 focus-within:border-[#111]">
               <LockKeyhole size={14} className="text-[#777b80]" />
               <input
                 id="access-password"
@@ -99,7 +99,7 @@ export function AccessGate({ configured }: { configured: boolean }) {
             </button>
           </form>
         ) : (
-          <div className="mt-7 rounded-lg border border-[#dededa] bg-[#f3f3f1] p-4">
+          <div className="mt-7 rounded-lg border border-[#dededa] bg-[#e4e0df] p-4">
             <p className="text-[11px] font-medium text-[#333]">
               Authentication requires configuration
             </p>
