@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono } from "next/font/google";
 import localFont from "next/font/local";
+import Script from "next/script";
 import "./globals.css";
 
 const plexMono = IBM_Plex_Mono({
@@ -28,6 +29,13 @@ export const metadata: Metadata = {
   },
 };
 
+/**
+ * Runs before hydration: when the landing hand-off flag is present the boot
+ * choreography owns the first frame, so dashboard regions must be hidden
+ * before the workspace client component mounts.
+ */
+const BOOT_PREPAINT = `try{if(sessionStorage.getItem("voltis-boot")){var r=matchMedia("(prefers-reduced-motion: reduce)").matches;document.documentElement.setAttribute(r?"data-vboot-reduced":"data-vboot","1")}}catch(e){}`;
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -35,7 +43,14 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${plexMono.variable} ${editorialNew.variable}`}>
-      <body>{children}</body>
+      <body>
+        <Script
+          id="voltis-boot-prepaint"
+          strategy="beforeInteractive"
+          dangerouslySetInnerHTML={{ __html: BOOT_PREPAINT }}
+        />
+        {children}
+      </body>
     </html>
   );
 }
