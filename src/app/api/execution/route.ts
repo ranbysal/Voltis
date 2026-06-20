@@ -2,7 +2,7 @@ import { z } from "zod";
 import { requireSession } from "@/lib/auth";
 
 const orderIntentSchema = z.object({
-  ticker: z.enum(["YM", "MYM", "NQ", "MNQ"]),
+  ticker: z.enum(["YM", "MYM", "NQ", "MNQ", "GC", "MGC"]),
   action: z.enum(["buy", "sell", "exit", "cancel"]),
   quantity: z.number().int().positive().max(100),
   targets: z.array(z.string().min(1).max(100)).min(1).max(20),

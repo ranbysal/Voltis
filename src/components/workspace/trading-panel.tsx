@@ -10,7 +10,11 @@ import {
   X,
 } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
-import type { ExecutionSize, SymbolFamily } from "@/lib/domain";
+import {
+  FAMILY_LABELS,
+  type ExecutionSize,
+  type SymbolFamily,
+} from "@/lib/domain";
 import { cn } from "@/lib/utils";
 import { Dropdown, MenuItem, Switch } from "@/components/workspace/ui";
 
@@ -32,11 +36,28 @@ const SPECS: Record<
     mini: { tick: 1, tickValue: 5, margin: 8060, symbol: "YM1!" },
     micro: { tick: 1, tickValue: 0.5, margin: 806, symbol: "MYM1!" },
   },
+  GC: {
+    mini: { tick: 0.1, tickValue: 10, margin: 12100, symbol: "GC1!" },
+    micro: { tick: 0.1, tickValue: 1, margin: 1210, symbol: "MGC1!" },
+  },
 };
 
 const EXCHANGES: Record<SymbolFamily, string> = {
   NQ: "CME",
   YM: "CBOT",
+  GC: "COMEX",
+};
+
+const FALLBACK_PRICE: Record<SymbolFamily, number> = {
+  NQ: 19164.75,
+  YM: 38642,
+  GC: 2355,
+};
+
+const FALLBACK_ANCHOR: Record<SymbolFamily, number> = {
+  NQ: 19150,
+  YM: 38600,
+  GC: 2350,
 };
 
 const ACCOUNTS = ["TopstepX - $50K Combine", "Apex - $25K PA"];
@@ -123,7 +144,7 @@ export function TradingPanel({
   onClose: () => void;
 }) {
   const spec = SPECS[family][size];
-  const last = lastPrice ?? (family === "NQ" ? 19164.75 : 38642);
+  const last = lastPrice ?? FALLBACK_PRICE[family];
   const ask = last;
   const bid = last - spec.tick * 2;
 
@@ -148,13 +169,11 @@ export function TradingPanel({
   if (seededFor !== seedKey) {
     const anchor = lastPrice
       ? Math.floor(lastPrice / 50) * 50
-      : family === "NQ"
-        ? 19150
-        : 38600;
+      : FALLBACK_ANCHOR[family];
     setSeededFor(seedKey);
     setPriceText(money(anchor));
-    setTpText(money(anchor + 150));
-    setSlText(money(anchor - 100));
+    setTpText(money(anchor + tpTicks * spec.tick));
+    setSlText(money(anchor - slTicks * spec.tick));
     setMessage(null);
   }
 
@@ -247,34 +266,23 @@ export function TradingPanel({
             className="h-9 w-full justify-between px-3"
             menuClassName="w-full"
           >
-            {(close) => (
-              <>
-                {(["NQ", "YM"] as const).map((item) => (
-                  <MenuItem
-                    key={item}
-                    active={family === item}
-                    onSelect={() => {
-                      onChangeFamily(item);
-                      close();
-                    }}
-                  >
-                    <span className="font-mono">
-                      {SPECS[item][size].symbol} · {EXCHANGES[item]}
-                    </span>
-                  </MenuItem>
-                ))}
-                {["ES1! · CME", "GC1! · COMEX", "SI1! · COMEX", "CL1! · NYMEX"].map(
-                  (item) => (
-                    <MenuItem key={item} disabled>
-                      <span className="font-mono">{item}</span>
-                      <span className="text-[8px] uppercase tracking-wide">
-                        soon
-                      </span>
-                    </MenuItem>
-                  ),
-                )}
-              </>
-            )}
+            {(close) =>
+              (["NQ", "YM", "GC"] as const).map((item) => (
+                <MenuItem
+                  key={item}
+                  active={family === item}
+                  onSelect={() => {
+                    onChangeFamily(item);
+                    close();
+                  }}
+                >
+                  <span>{FAMILY_LABELS[item]}</span>
+                  <span className="font-mono text-[9px] text-ink-3">
+                    {SPECS[item][size].symbol} · {EXCHANGES[item]}
+                  </span>
+                </MenuItem>
+              ))
+            }
           </Dropdown>
         </div>
 

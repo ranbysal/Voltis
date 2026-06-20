@@ -22,6 +22,8 @@ import {
 import {
   FIB_LEVELS,
   fibPrice,
+  type FibAnchor,
+  type FibDirection,
   type FibDrawing,
   type MarketBar,
   type SymbolFamily,
@@ -44,8 +46,17 @@ type MarketChartProps = {
   /** 0..1 sweep that draws the EMA lines left -> right during the boot. */
   emaReveal?: number;
   readOnly?: boolean;
+  /** When true the Fib tool is armed: click two points to drop a manual fib. */
+  drawFib?: boolean;
   onUpdateFib: (id: string, patch: Partial<FibDrawing>) => void;
+  onCreateFib?: (
+    start: FibAnchor,
+    end: FibAnchor,
+    direction: FibDirection,
+  ) => void;
 };
+
+type DraftPoint = { x: number; y: number; price: number };
 
 type FibGeometry = {
   fib: FibDrawing;
@@ -168,7 +179,9 @@ export function MarketChart({
   showEma50 = true,
   emaReveal = 1,
   readOnly = false,
+  drawFib = false,
   onUpdateFib,
+  onCreateFib,
 }: MarketChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -178,6 +191,22 @@ export function MarketChart({
   const ema20Ref = useRef<ISeriesApi<"Line", Time> | null>(null);
   const ema50Ref = useRef<ISeriesApi<"Line", Time> | null>(null);
   const [geometry, setGeometry] = useState<FibGeometry[]>([]);
+  // Manual fib drawing: first click sets `start`, pointer-move tracks `cursor`,
+  // second click finalizes. Points are kept in container-relative pixels.
+  const [draft, setDraft] = useState<{
+    start: DraftPoint;
+    cursor: DraftPoint;
+  } | null>(null);
+  // Reset a partial draw whenever the Fib tool is toggled on/off. This is
+  // React's recommended render-time adjustment, which avoids both an effect
+  // and a stale start point leaking into the next drawing session.
+  const [draftArmed, setDraftArmed] = useState(drawFib);
+  if (draftArmed !== drawFib) {
+    setDraftArmed(drawFib);
+    if (draft !== null) {
+      setDraft(null);
+    }
+  }
 
   const ema20Data = useMemo(
     () =>
@@ -349,7 +378,7 @@ export function MarketChart({
       priceFormat: {
         type: "price",
         precision: family === "YM" ? 0 : 2,
-        minMove: family === "YM" ? 1 : 0.25,
+        minMove: family === "YM" ? 1 : family === "GC" ? 0.1 : 0.25,
       },
     });
     if (chartStyle === "candles") {
@@ -386,7 +415,11 @@ export function MarketChart({
     }
 
     let raf = 0;
-    let prevKey = "";
+    // Sentinel (not "") so the first commit always fires — including when the
+    // overlay transitions to *zero* fibs. An empty geometry list serializes to
+    // "", which previously matched the initial prevKey and left the last fib
+    // stranded on screen after it was toggled off.
+    let prevKey: string | null = null;
     const sync = () => {
       const next = buildFibGeometry(
         chart,
@@ -473,6 +506,82 @@ export function MarketChart({
       manual: true,
       updatedAt: new Date().toISOString(),
     });
+  }
+
+  // Esc cancels the current draw without leaving a partial drawing behind.
+  useEffect(() => {
+    if (!draft) {
+      return;
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setDraft(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [draft]);
+
+  // Resolve a pointer event to a container-relative point and its price. Refs
+  // are read only here, inside event handlers — never during render.
+  function draftPointFromEvent(
+    event: ReactPointerEvent<HTMLDivElement>,
+  ): DraftPoint | null {
+    const container = containerRef.current;
+    const series = seriesRef.current;
+    if (!container || !series) {
+      return null;
+    }
+    const rect = container.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const price = series.coordinateToPrice(y);
+    return { x, y, price: price ?? Number.NaN };
+  }
+
+  // Snap a draft point to the nearest bar to produce a persistable anchor.
+  function coordsToAnchor(point: DraftPoint): FibAnchor | null {
+    const chart = chartRef.current;
+    if (!chart || bars.length === 0 || !Number.isFinite(point.price)) {
+      return null;
+    }
+    const time = numericTime(chart.timeScale().coordinateToTime(point.x));
+    if (time === null) {
+      return null;
+    }
+    const nearest = bars.reduce((best, bar) =>
+      Math.abs(bar.time - time) < Math.abs(best.time - time) ? bar : best,
+    );
+    return { time: nearest.time, price: point.price };
+  }
+
+  function handleDrawPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    const point = draftPointFromEvent(event);
+    if (!point) {
+      return;
+    }
+    if (!draft) {
+      setDraft({ start: point, cursor: point });
+      return;
+    }
+    const start = coordsToAnchor(draft.start);
+    const end = coordsToAnchor(point);
+    setDraft(null);
+    if (start && end) {
+      const direction: FibDirection =
+        end.price >= start.price ? "buy" : "sell";
+      onCreateFib?.(start, end, direction);
+    }
+  }
+
+  function handleDrawPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!draft) {
+      return;
+    }
+    const point = draftPointFromEvent(event);
+    if (point) {
+      setDraft((current) => (current ? { ...current, cursor: point } : current));
+    }
   }
 
   return (
@@ -587,7 +696,114 @@ export function MarketChart({
             </g>
           ),
         )}
+
+        {draft
+          ? (() => {
+              const dark = theme === "dark";
+              const style = (dark ? DARK_TF_STYLE : LIGHT_TF_STYLE)[timeframe];
+              const direction =
+                draft.cursor.y < draft.start.y ? "buy" : "sell";
+              const color = direction === "buy" ? style.buy : style.sell;
+              const pricesKnown =
+                Number.isFinite(draft.start.price) &&
+                Number.isFinite(draft.cursor.price);
+              return (
+                <g opacity={Math.min(1, style.opacity + 0.16)}>
+                  {FIB_LEVELS.map((level) => {
+                    const y =
+                      draft.cursor.y +
+                      level * (draft.start.y - draft.cursor.y);
+                    const price = pricesKnown
+                      ? draft.cursor.price +
+                        level * (draft.start.price - draft.cursor.price)
+                      : null;
+                    return (
+                      <g key={level}>
+                        <line
+                          x1={0}
+                          x2="100%"
+                          y1={y}
+                          y2={y}
+                          stroke={color}
+                          strokeWidth={1.2}
+                          strokeDasharray="2 4"
+                          opacity={0.85}
+                        />
+                        {price !== null ? (
+                          <text
+                            x="100%"
+                            dx={-92}
+                            y={y - 6}
+                            textAnchor="end"
+                            fill={color}
+                            style={{ fontFamily: "var(--font-mono)" }}
+                            fontSize={10}
+                            fontWeight={600}
+                            paintOrder="stroke"
+                            stroke={dark ? "#060b0b" : "#e4e0df"}
+                            strokeWidth={4}
+                          >
+                            {level}{" "}
+                            {`(${price.toLocaleString("en-US", {
+                              minimumFractionDigits: family === "YM" ? 0 : 2,
+                              maximumFractionDigits: family === "YM" ? 0 : 2,
+                            })})`}
+                          </text>
+                        ) : null}
+                      </g>
+                    );
+                  })}
+                  <line
+                    x1={draft.start.x}
+                    y1={draft.start.y}
+                    x2={draft.cursor.x}
+                    y2={draft.cursor.y}
+                    stroke={color}
+                    strokeWidth={1.4}
+                    strokeDasharray="7 7"
+                  />
+                  {[draft.start, draft.cursor].map((point, index) => (
+                    <circle
+                      key={index}
+                      cx={point.x}
+                      cy={point.y}
+                      r={5}
+                      fill={dark ? "#0b1212" : "#ffffff"}
+                      stroke={color}
+                      strokeWidth={2}
+                    />
+                  ))}
+                </g>
+              );
+            })()
+          : null}
       </svg>
+
+      {!readOnly ? (
+        <div
+          className={cn(
+            "absolute inset-0 z-30",
+            drawFib ? "cursor-crosshair" : "pointer-events-none",
+          )}
+          onPointerDown={drawFib ? handleDrawPointerDown : undefined}
+          onPointerMove={drawFib ? handleDrawPointerMove : undefined}
+        />
+      ) : null}
+
+      {drawFib && !readOnly ? (
+        <div
+          className={cn(
+            "pointer-events-none absolute left-1/2 top-3 z-30 -translate-x-1/2 whitespace-nowrap rounded-md border px-2.5 py-1.5 font-mono text-[9px] shadow-sm backdrop-blur",
+            theme === "dark"
+              ? "border-[#15201f] bg-[#0b1212]/92 text-[#8fa9a4]"
+              : "border-[#e6e5e1] bg-[#e4e0df]/92 text-[#6d7277]",
+          )}
+        >
+          {draft
+            ? "Click to place the second point · Esc to cancel"
+            : "Click two points to draw a Fib · drag up = buy, down = sell"}
+        </div>
+      ) : null}
 
       <div
         className={cn(

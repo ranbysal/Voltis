@@ -11,9 +11,16 @@ export const TIMEFRAMES = [
 ] as const;
 
 export type Timeframe = (typeof TIMEFRAMES)[number];
-export type SymbolFamily = "YM" | "NQ";
+export type SymbolFamily = "YM" | "NQ" | "GC";
 export type ExecutionSize = "mini" | "micro";
 export type FibDirection = "buy" | "sell";
+
+/** Human-friendly instrument names shown in the selector dropdowns. */
+export const FAMILY_LABELS: Record<SymbolFamily, string> = {
+  NQ: "Nasdaq (NQ)",
+  YM: "Dow Jones (YM)",
+  GC: "Gold (GC)",
+};
 
 export type MarketBar = {
   time: number;
@@ -81,9 +88,13 @@ export const DEFAULT_WORKSPACE: WorkspaceState = {
 export function executionTicker(
   family: SymbolFamily,
   size: ExecutionSize,
-): "YM" | "MYM" | "NQ" | "MNQ" {
+): "YM" | "MYM" | "NQ" | "MNQ" | "GC" | "MGC" {
   if (family === "YM") {
     return size === "mini" ? "YM" : "MYM";
+  }
+
+  if (family === "GC") {
+    return size === "mini" ? "GC" : "MGC";
   }
 
   return size === "mini" ? "NQ" : "MNQ";

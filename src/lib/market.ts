@@ -20,6 +20,15 @@ export const TIMEFRAME_SECONDS: Record<Timeframe, number> = {
 const BASE_PRICE: Record<SymbolFamily, number> = {
   YM: 50_640,
   NQ: 21_970,
+  GC: 2_355,
+};
+
+// Per-family multiplier applied to the base intrabar volatility so each
+// instrument's candles move on a realistic scale for its price level.
+const VOLATILITY_SCALE: Record<SymbolFamily, number> = {
+  YM: 1,
+  NQ: 0.55,
+  GC: 0.3,
 };
 
 function hashSeed(input: string) {
@@ -53,7 +62,7 @@ export function generateMarketBars(
 ): MarketBar[] {
   const random = mulberry32(hashSeed(`${family}:${timeframe}`));
   const step = TIMEFRAME_SECONDS[timeframe];
-  const scale = family === "YM" ? 1 : 0.55;
+  const scale = VOLATILITY_SCALE[family];
   const timeframeScale = Math.max(1, Math.sqrt(step / 300));
   const volatility = 22 * scale * timeframeScale;
   const endTime = alignTime(timeframe);
@@ -110,7 +119,7 @@ export function tickLastBar(
 
   const next = [...bars];
   const current = next[next.length - 1];
-  const amplitude = family === "YM" ? 5.5 : 2.75;
+  const amplitude = family === "YM" ? 5.5 : family === "GC" ? 1.2 : 2.75;
   const close = roundPrice(
     current.close + Math.sin(phase / 2.2) * amplitude,
     family,
@@ -294,6 +303,6 @@ function orderedExtremaFallback(
 }
 
 function roundPrice(price: number, family: SymbolFamily) {
-  const tick = family === "YM" ? 1 : 0.25;
+  const tick = family === "YM" ? 1 : family === "GC" ? 0.1 : 0.25;
   return Math.round(price / tick) * tick;
 }

@@ -146,10 +146,11 @@ export function MenuItem({
     <button
       disabled={disabled}
       onClick={onSelect}
+      style={active && !disabled ? { boxShadow: "var(--glow)" } : undefined}
       className={cn(
         "flex w-full items-center justify-between gap-3 whitespace-nowrap rounded-lg px-3 py-2 text-left text-[11px] transition",
         active
-          ? "bg-chip text-chip-ink"
+          ? "bg-chip font-medium text-chip-ink"
           : "text-ink hover:bg-card-soft",
         disabled && "cursor-not-allowed text-ink-3 hover:bg-transparent",
       )}

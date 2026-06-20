@@ -12,7 +12,7 @@ const anchorSchema = z.object({
 
 const fibSchema = z.object({
   id: z.string().min(1),
-  family: z.enum(["YM", "NQ"]),
+  family: z.enum(["YM", "NQ", "GC"]),
   timeframe: z.enum(TIMEFRAMES),
   direction: z.enum(["buy", "sell"]),
   start: anchorSchema,
@@ -24,7 +24,7 @@ const fibSchema = z.object({
 });
 
 const workspaceSchema = z.object({
-  family: z.enum(["YM", "NQ"]),
+  family: z.enum(["YM", "NQ", "GC"]),
   executionSize: z.enum(["mini", "micro"]),
   timeframe: z.enum(TIMEFRAMES),
   fibs: z.array(fibSchema).max(36),

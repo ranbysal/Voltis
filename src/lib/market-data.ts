@@ -44,6 +44,7 @@ type ContractBar = MarketBar & { symbol: string };
 const CONTINUOUS_SYMBOL: Record<SymbolFamily, string> = {
   YM: "YM.v.0",
   NQ: "NQ.v.0",
+  GC: "GC.v.0",
 };
 
 export function historyRequest(timeframe: Timeframe, count: number) {

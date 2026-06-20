@@ -5,7 +5,7 @@ import { requireSession } from "@/lib/auth";
 import { getMarketDataProvider } from "@/lib/market-data";
 
 const requestSchema = z.object({
-  family: z.enum(["YM", "NQ"]).default("YM"),
+  family: z.enum(["YM", "NQ", "GC"]).default("YM"),
   timeframe: z.enum(TIMEFRAMES).default("30m"),
 });
 

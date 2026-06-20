@@ -33,8 +33,10 @@ import {
 } from "react";
 import {
   DEFAULT_WORKSPACE,
+  FAMILY_LABELS,
   TIMEFRAMES,
   executionTicker,
+  type FibAnchor,
   type FibDirection,
   type FibDrawing,
   type MarketBar,
@@ -154,6 +156,7 @@ const FAMILY_DETAILS: Record<
 > = {
   YM: { name: "E-mini Dow Jones Futures", exchange: "CBOT" },
   NQ: { name: "E-mini Nasdaq-100 Futures", exchange: "CME" },
+  GC: { name: "Gold Futures", exchange: "COMEX" },
 };
 
 const CHART_TOOLS = [
@@ -958,6 +961,47 @@ export function TradingWorkspace() {
     });
   }
 
+  // Drop a hand-drawn fib for the active family/timeframe. Manual layers are
+  // locked so the auto-detect pass never overwrites them, and they replace the
+  // single buy/sell layer that family+timeframe already owns.
+  function createManualFib(
+    start: FibAnchor,
+    end: FibAnchor,
+    direction: FibDirection,
+  ) {
+    setWorkspace((current) => {
+      const replacement: FibDrawing = {
+        id: nanoid(),
+        family: current.family,
+        timeframe: current.timeframe,
+        direction,
+        start,
+        end,
+        visible: true,
+        locked: true,
+        manual: true,
+        updatedAt: new Date().toISOString(),
+      };
+
+      return {
+        ...current,
+        fibs: [
+          ...current.fibs.filter(
+            (fib) =>
+              !(
+                fib.family === current.family &&
+                fib.timeframe === current.timeframe &&
+                fib.direction === direction
+              ),
+          ),
+          replacement,
+        ],
+      };
+    });
+    // Return to the crosshair so the chart can be panned again.
+    setActiveTool(0);
+  }
+
   async function refreshFib(fib: FibDrawing) {
     let source = bars;
     if (
@@ -1043,6 +1087,8 @@ export function TradingWorkspace() {
 
   const symbolLabel = `${workspace.family}1!`;
   const detail = FAMILY_DETAILS[workspace.family];
+  const fibToolActive =
+    CHART_TOOLS[activeTool]?.label === "Fib retracement" && !activePanel;
 
   return (
     <BootProvider value={boot}>
@@ -1125,12 +1171,11 @@ export function TradingWorkspace() {
               <>
                 <MenuItem
                   onSelect={() => {
-                    setShowFibPanel(true);
-                    setShowTradePanel(true);
                     close();
+                    window.location.assign("/");
                   }}
                 >
-                  Restore panels
+                  Home
                 </MenuItem>
                 <MenuItem
                   onSelect={() => {
@@ -1234,31 +1279,23 @@ export function TradingWorkspace() {
                     }
                     className="h-9 px-3.5"
                   >
-                    {(close) => (
-                      <>
-                        {(["NQ", "YM"] as const).map((item) => (
-                          <MenuItem
-                            key={item}
-                            active={workspace.family === item}
-                            onSelect={() => {
-                              selectFamily(item);
-                              close();
-                            }}
-                          >
-                            <span className="font-mono">{item}1!</span>
-                            <span className="text-[8px]">
-                              {FAMILY_DETAILS[item].exchange}
-                            </span>
-                          </MenuItem>
-                        ))}
-                        {["ES", "GC", "SI", "CL"].map((item) => (
-                          <MenuItem key={item} disabled>
-                            <span className="font-mono">{item}1!</span>
-                            <span className="text-[8px] uppercase">soon</span>
-                          </MenuItem>
-                        ))}
-                      </>
-                    )}
+                    {(close) =>
+                      (["NQ", "YM", "GC"] as const).map((item) => (
+                        <MenuItem
+                          key={item}
+                          active={workspace.family === item}
+                          onSelect={() => {
+                            selectFamily(item);
+                            close();
+                          }}
+                        >
+                          <span>{FAMILY_LABELS[item]}</span>
+                          <span className="font-mono text-[8px] text-ink-3">
+                            {item}1! · {FAMILY_DETAILS[item].exchange}
+                          </span>
+                        </MenuItem>
+                      ))
+                    }
                   </Dropdown>
 
                   <Dropdown
@@ -1488,7 +1525,9 @@ export function TradingWorkspace() {
                 showEma20={showEma20}
                 showEma50={showEma50}
                 emaReveal={emaReveal}
+                drawFib={fibToolActive}
                 onUpdateFib={updateFib}
+                onCreateFib={createManualFib}
               />
 
               {/* popup panels */}
