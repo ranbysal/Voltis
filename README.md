@@ -13,7 +13,9 @@ and a deliberately gated execution panel for funded-account workflows.
 - One buy and one sell layer per family/timeframe
 - Cross-timeframe overlays with direction colors and timeframe opacity
 - Layer visibility, lock, refresh, delete, local persistence, and optional Neon
-- Password-protected single-user access and authenticated server routes
+- Email + password admin sign-in (`/login`) with an optional 30-day session
+- Account settings (`/settings`) to connect Topstep, Alpha Futures,
+  TakeProfitTrader, and Lucid through their shared Tradovate login
 - Desktop trading workspace plus a compact read-only chart experience
 - Armed paper orders with account selection, mini/micro sizing, and brackets
 
@@ -70,6 +72,18 @@ TRADING_MODE=paper
 
 `VOLTIS_SESSION_SECRET` and `MARKET_GATEWAY_SECRET` must each be at least 32
 characters. Use `wss://` for `MARKET_GATEWAY_URL` in production.
+
+### Sign-in
+
+Yazan signs in at `/login` with `VOLTIS_ADMIN_EMAIL` and
+`VOLTIS_ADMIN_PASSWORD`. For convenience these fall back to
+`yazan@voltis.trade` / `voltis` in development so the flow works with no `.env`
+file — set real values (and `VOLTIS_SESSION_SECRET`) before deploying.
+`VOLTIS_ADMIN_PASSWORD` also falls back to the legacy `VOLTIS_ACCESS_PASSWORD`.
+After signing in, open **Settings** from the account menu (top right) to connect
+each prop firm with the Tradovate credentials they route through. Connection
+state persists in the browser; Tradovate passwords are sent over HTTPS to
+`/api/connections` and are never written to local storage.
 
 When `DATABASE_URL` is absent, workspace state persists in browser storage.
 When present, `/api/workspace` synchronizes the same state to Neon.

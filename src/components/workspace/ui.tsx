@@ -62,12 +62,14 @@ export function Dropdown({
   className,
   menuClassName,
   align = "left",
+  hideChevron = false,
   children,
 }: {
   label: ReactNode;
   className?: string;
   menuClassName?: string;
   align?: "left" | "right";
+  hideChevron?: boolean;
   children: ReactNode | ((close: () => void) => ReactNode);
 }) {
   const [open, setOpen] = useState(false);
@@ -105,13 +107,15 @@ export function Dropdown({
         )}
       >
         {label}
-        <ChevronDown
-          size={13}
-          className={cn(
-            "text-ink-2 transition-transform",
-            open && "rotate-180",
-          )}
-        />
+        {hideChevron ? null : (
+          <ChevronDown
+            size={13}
+            className={cn(
+              "text-ink-2 transition-transform",
+              open && "rotate-180",
+            )}
+          />
+        )}
       </button>
       {open ? (
         <div

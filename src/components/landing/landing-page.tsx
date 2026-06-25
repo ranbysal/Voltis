@@ -28,6 +28,7 @@ export function LandingPage() {
 
   useEffect(() => {
     router.prefetch("/workspace");
+    router.prefetch("/login");
   }, [router]);
 
   /* ----- page-load reveal (grid blocks / hero scale / masked nav) ----- */
@@ -220,7 +221,12 @@ export function LandingPage() {
           <HeroTypography scrambling={scrambling} />
           <HeroPortrait />
         </div>
-        <Navbar onNavigate={startBootTransition} scrambling={scrambling} />
+        <Navbar
+          onHome={() => router.push("/")}
+          onViewer={startBootTransition}
+          onLogin={() => router.push("/login")}
+          scrambling={scrambling}
+        />
       </div>
 
       <BootFrame id="v-bootframe" />

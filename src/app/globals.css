@@ -247,6 +247,14 @@
   font-weight: 400;
 }
 
+/* Upright display serif (brand wordmark + headings on the login / settings
+   surfaces). Tinos is metric-compatible with Times New Roman, so it matches
+   the reference mockups on Linux/headless renders that lack the real face. */
+.v-serif {
+  font-family: var(--font-display), "Times New Roman", "Tinos", Georgia, serif;
+  font-style: normal;
+}
+
 /* IBM Plex Mono has no official Condensed cut; the nav links carry a
    synthetic condensation so they read as the condensed style. */
 .v-condensed {
@@ -263,6 +271,46 @@
 .v-mask > * {
   display: inline-block;
   will-change: transform;
+}
+
+/* ------------------------------------------------------------------ */
+/* Login surface                                                        */
+/* ------------------------------------------------------------------ */
+
+/* The login screen reproduces a 1672 x 941 reference composition (the landing
+   backdrop + a sign-in card). It reuses the same "one design unit" scaling so
+   the card stays pixel-aligned to the portrait and wordmark at any size. */
+.v-auth {
+  --s: min(calc(100vw / 1672), calc(100dvh / 941));
+  --auth-ink: #1b1b1d;
+  --auth-ink-soft: #6f716c;
+  --auth-card: #e9e6e4;
+  --auth-field: #efedeb;
+  --auth-line: #d7d4d1;
+}
+
+/* ------------------------------------------------------------------ */
+/* Settings surface                                                     */
+/* ------------------------------------------------------------------ */
+
+/* Settings rides the shared workspace theme tokens (.vw) so dark mode and the
+   bg-card / border-line / text-ink utilities all work. In light mode we lift
+   the paper a touch and warm the cards to match the reference. */
+.v-settings[data-theme="light"] {
+  --bg: #f3f1ee;
+  --panel: #f6f4f2;
+  --card: #faf9f7;
+  --card-soft: #f0eeeb;
+  --line: #e6e3df;
+  --line-soft: #efedea;
+  --ink: #17140f;
+  --ink-2: #6c6a64;
+  --ink-3: #9b9890;
+}
+
+.v-settings[data-theme="dark"] {
+  --bg: #07100f;
+  --panel: #0a1413;
 }
 
 /* ------------------------------------------------------------------ */

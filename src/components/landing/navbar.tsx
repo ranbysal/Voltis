@@ -10,18 +10,23 @@ import { u } from "./units";
  * scramble-corrupts away during the boot transition.
  */
 export function Navbar({
-  onNavigate,
+  onHome,
+  onViewer,
+  onLogin,
   scrambling,
 }: {
-  onNavigate: (path: string) => void;
+  onHome: () => void;
+  onViewer: () => void;
+  onLogin: () => void;
   scrambling: boolean;
 }) {
   return (
     <header className="absolute inset-x-0 top-0 z-50">
       <div className="v-mask absolute" style={{ left: u(18), top: u(19) }}>
-        <span
+        <button
           data-nav-item
           aria-label="VOLTIS"
+          onClick={onHome}
           className="block select-none font-medium text-[#1f1f21]"
           style={{ fontSize: u(44), letterSpacing: "0.18em", lineHeight: 1.1 }}
         >
@@ -34,7 +39,7 @@ export function Navbar({
             holdMs={ms(300)}
             truncStaggerMs={ms(60)}
           />
-        </span>
+        </button>
       </div>
       <nav
         className="absolute flex items-baseline text-[#2c2c2e]"
@@ -44,7 +49,7 @@ export function Navbar({
           <button
             data-nav-item
             aria-label="Viewer"
-            onClick={() => onNavigate("/workspace")}
+            onClick={onViewer}
             className="transition-colors duration-200 hover:text-black"
             style={{ fontSize: u(22), letterSpacing: "0.02em", lineHeight: 1.2 }}
           >
@@ -65,7 +70,7 @@ export function Navbar({
           <button
             data-nav-item
             aria-label="Login"
-            onClick={() => onNavigate("/workspace")}
+            onClick={onLogin}
             className="transition-colors duration-200 hover:text-black"
             style={{ fontSize: u(22), letterSpacing: "0.02em", lineHeight: 1.2 }}
           >

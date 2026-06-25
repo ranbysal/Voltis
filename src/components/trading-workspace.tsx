@@ -9,18 +9,21 @@ import {
   Crosshair,
   Eye,
   Layers3,
+  LogOut,
   Magnet,
   Maximize2,
   Minimize2,
   Moon,
   MoveDiagonal,
   Ruler,
+  Settings,
   Smile,
   Spline,
   Sun,
   Trash2,
   TrendingUp,
   Type,
+  User,
   ZoomIn,
 } from "lucide-react";
 import { nanoid } from "nanoid";
@@ -1103,12 +1106,14 @@ export function TradingWorkspace() {
         data-boot-region="0"
         className="flex h-[60px] shrink-0 items-center justify-between border-b border-line bg-panel px-6"
       >
-        <span
+        <button
           data-boot-content
-          className="text-[21px] font-semibold tracking-[-0.04em]"
+          onClick={() => window.location.assign("/")}
+          aria-label="Voltis home"
+          className="text-[21px] font-semibold tracking-[-0.04em] transition-opacity hover:opacity-70"
         >
           Voltis
-        </span>
+        </button>
 
         <div data-boot-content className="flex items-center gap-2.5">
           <button
@@ -1172,17 +1177,34 @@ export function TradingWorkspace() {
                 <MenuItem
                   onSelect={() => {
                     close();
-                    window.location.assign("/");
+                    window.location.assign("/settings?section=security");
                   }}
                 >
-                  Home
+                  <span className="flex items-center gap-2.5">
+                    <User size={14} />
+                    My Account
+                  </span>
+                </MenuItem>
+                <MenuItem
+                  onSelect={() => {
+                    close();
+                    window.location.assign("/settings");
+                  }}
+                >
+                  <span className="flex items-center gap-2.5">
+                    <Settings size={14} />
+                    Settings
+                  </span>
                 </MenuItem>
                 <MenuItem
                   onSelect={() => {
                     void signOut();
                   }}
                 >
-                  Sign out
+                  <span className="flex items-center gap-2.5">
+                    <LogOut size={14} />
+                    Log out
+                  </span>
                 </MenuItem>
               </>
             )}

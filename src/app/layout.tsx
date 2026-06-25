@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Mono } from "next/font/google";
+import { IBM_Plex_Mono, Tinos } from "next/font/google";
 import localFont from "next/font/local";
 import Script from "next/script";
 import "./globals.css";
@@ -15,6 +15,15 @@ const editorialNew = localFont({
   style: "italic",
   weight: "400",
   variable: "--font-serif",
+});
+
+// Upright transitional serif used for the brand wordmark and display headings
+// on the login + settings surfaces. Tinos is metric-compatible with Times New
+// Roman, so it reproduces the reference mockups faithfully on every platform.
+const displaySerif = Tinos({
+  subsets: ["latin"],
+  weight: ["400", "700"],
+  variable: "--font-display",
 });
 
 export const metadata: Metadata = {
@@ -42,7 +51,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${plexMono.variable} ${editorialNew.variable}`}>
+    <html
+      lang="en"
+      className={`${plexMono.variable} ${editorialNew.variable} ${displaySerif.variable}`}
+    >
       <body>
         <Script
           id="voltis-boot-prepaint"
