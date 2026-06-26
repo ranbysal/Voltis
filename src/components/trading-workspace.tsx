@@ -819,9 +819,12 @@ export function TradingWorkspace() {
     ) {
       return;
     }
+    // Historical fallback refresh. Each refresh re-pulls the window from
+    // Databento, so keep it gentle (60s) to limit data usage; real-time
+    // updates come from the live gateway when it is connected.
     const interval = window.setInterval(() => {
       void loadMarketHistory(workspace.family, workspace.timeframe);
-    }, 30_000);
+    }, 60_000);
     return () => window.clearInterval(interval);
   }, [
     hydrated,

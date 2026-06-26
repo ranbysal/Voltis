@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   backAdjustContinuousBars,
+  barCountFor,
   clampedRangeFromError,
   DatabentoHistoricalProvider,
   historyRequest,
   parseDatabentoJsonLines,
+  sourceSchemaFor,
 } from "./market-data";
 
 describe("Databento market data normalization", () => {
@@ -64,11 +66,37 @@ describe("Databento market data normalization", () => {
     expect(adjusted[1].open).toBe(110);
   });
 
-  it("uses granular source bars for exchange-session timeframes", () => {
-    expect(historyRequest("5m", 260).source).toBe("ohlcv-1m");
-    expect(historyRequest("1d", 260).source).toBe("ohlcv-1h");
-    expect(historyRequest("1w", 260).source).toBe("ohlcv-1h");
-    expect(historyRequest("1M", 260).source).toBe("ohlcv-1h");
+  it("routes each timeframe to the lightest correct source schema", () => {
+    // sub-hour -> 1-minute bars
+    expect(sourceSchemaFor("5m")).toBe("ohlcv-1m");
+    expect(sourceSchemaFor("30m")).toBe("ohlcv-1m");
+    // hourly + the session-aligned daily view -> 1-hour bars
+    expect(sourceSchemaFor("1h")).toBe("ohlcv-1h");
+    expect(sourceSchemaFor("4h")).toBe("ohlcv-1h");
+    expect(sourceSchemaFor("1d")).toBe("ohlcv-1h");
+    // multi-day / weekly / monthly -> daily bars (deep history, light payload)
+    expect(sourceSchemaFor("3d")).toBe("ohlcv-1d");
+    expect(sourceSchemaFor("1w")).toBe("ohlcv-1d");
+    expect(sourceSchemaFor("1M")).toBe("ohlcv-1d");
+    // historyRequest reports the same schema it queries
+    expect(historyRequest("30m", 260).source).toBe("ohlcv-1m");
+    expect(historyRequest("1w", 260).source).toBe("ohlcv-1d");
+  });
+
+  it("loads deep history on cheap timeframes and stays bounded on 1-minute ones", () => {
+    expect(barCountFor("30m")).toBe(260);
+    expect(barCountFor("1h")).toBeGreaterThan(barCountFor("30m"));
+    expect(barCountFor("1w")).toBeGreaterThanOrEqual(300);
+  });
+
+  it("clamps the request end behind 'now' to dodge the availability boundary", () => {
+    const { start, end } = historyRequest("30m", 260);
+    const endMs = new Date(end).getTime();
+    const startMs = new Date(start).getTime();
+    expect(endMs).toBeLessThanOrEqual(Date.now());
+    // a few minutes of safety margin, not the live edge
+    expect(Date.now() - endMs).toBeGreaterThanOrEqual(5 * 60 * 1000);
+    expect(startMs).toBeLessThan(endMs);
   });
 
   it("clamps `end` to the available range on a data_end error", () => {

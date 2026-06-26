@@ -47,15 +47,59 @@ const CONTINUOUS_SYMBOL: Record<SymbolFamily, string> = {
   GC: "GC.v.0",
 };
 
+// Databento finalizes bars with a short lag; ask for data a few minutes behind
+// "now" so the request lands inside the available window on the first try (the
+// retry/clamp below still covers any larger lag).
+const END_SAFETY_MS = 10 * 60 * 1000;
+
+/**
+ * Source schema per timeframe. Sub-hour views must aggregate from 1-minute
+ * bars; hourly/4h and the session-aligned daily view rebuild from 1-hour bars;
+ * the multi-day/weekly/monthly views aggregate from daily bars — far lighter
+ * to fetch, so they can reach years of history without a huge payload.
+ */
+export function sourceSchemaFor(
+  timeframe: Timeframe,
+): "ohlcv-1m" | "ohlcv-1h" | "ohlcv-1d" {
+  if (timeframe === "5m" || timeframe === "10m" || timeframe === "30m") {
+    return "ohlcv-1m";
+  }
+  if (timeframe === "1h" || timeframe === "4h" || timeframe === "1d") {
+    return "ohlcv-1h";
+  }
+  return "ohlcv-1d";
+}
+
+/**
+ * How many bars to load per timeframe. Sub-hour views stay bounded (they pull
+ * heavy 1-minute data); hourly and daily-sourced views load deep history
+ * because their payloads are light.
+ */
+export function barCountFor(timeframe: Timeframe): number {
+  switch (timeframe) {
+    case "5m":
+    case "10m":
+    case "30m":
+      return 260;
+    case "1h":
+    case "4h":
+      return 400;
+    case "1d":
+      return 300;
+    case "3d":
+      return 300;
+    case "1w":
+      return 312;
+    case "1M":
+      return 180;
+    default:
+      return 260;
+  }
+}
+
 export function historyRequest(timeframe: Timeframe, count: number) {
-  const now = new Date();
-  const source:
-    | "ohlcv-1m"
-    | "ohlcv-1h"
-    | "ohlcv-1d" =
-    ["5m", "10m", "30m"].includes(timeframe)
-      ? "ohlcv-1m"
-      : "ohlcv-1h";
+  const endMs = Date.now() - END_SAFETY_MS;
+  const source = sourceSchemaFor(timeframe);
   const daysPerBar: Record<Timeframe, number> = {
     "5m": 5 / 1_440,
     "10m": 10 / 1_440,
@@ -73,13 +117,14 @@ export function historyRequest(timeframe: Timeframe, count: number) {
     7,
     Math.ceil(daysPerBar[timeframe] * count * calendarBuffer),
   );
-  const start = new Date(now);
+  const end = new Date(endMs);
+  const start = new Date(endMs);
   start.setUTCDate(start.getUTCDate() - lookbackDays);
 
   return {
     source,
     start: start.toISOString(),
-    end: now.toISOString(),
+    end: end.toISOString(),
   };
 }
 
@@ -163,7 +208,7 @@ export class DemoMarketDataProvider implements MarketDataProvider {
   async getHistory(
     family: SymbolFamily,
     timeframe: Timeframe,
-    count = 260,
+    count = barCountFor(timeframe),
   ): Promise<MarketHistory> {
     return {
       provider: "demo",
@@ -213,7 +258,7 @@ export class DatabentoHistoricalProvider implements MarketDataProvider {
   async getHistory(
     family: SymbolFamily,
     timeframe: Timeframe,
-    count = 260,
+    count = barCountFor(timeframe),
   ): Promise<MarketHistory> {
     const request = historyRequest(timeframe, count);
     let range = { start: request.start, end: request.end };
