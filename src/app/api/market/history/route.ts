@@ -4,6 +4,10 @@ import { TIMEFRAMES } from "@/lib/domain";
 import { requireSession } from "@/lib/auth";
 import { getMarketDataProvider } from "@/lib/market-data";
 
+// A deep Databento history pull can take several seconds; give the serverless
+// function room (Vercel defaults to 10s) so cloud requests don't time out.
+export const maxDuration = 60;
+
 const requestSchema = z.object({
   family: z.enum(["YM", "NQ", "GC"]).default("YM"),
   timeframe: z.enum(TIMEFRAMES).default("30m"),

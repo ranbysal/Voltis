@@ -1,0 +1,31 @@
+# Render Blueprint for the Voltis live market gateway.
+#
+# Deploy: render.com -> New + -> Blueprint -> connect this repo. Render reads
+# this file, builds the Docker image in services/market-gateway, and prompts
+# you for the secret values below. The service holds the Databento key and
+# streams live NQ/YM bars to the Voltis app over an authenticated WebSocket.
+#
+# The live feed must stay connected, so this uses an always-on plan (Render's
+# free instances sleep on idle, which would drop the stream).
+services:
+  - type: web
+    name: voltis-market-gateway
+    runtime: docker
+    dockerfilePath: ./services/market-gateway/Dockerfile
+    dockerContext: ./services/market-gateway
+    plan: starter
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Your Databento API key (same one the app uses). Entered in the dashboard.
+      - key: DATABENTO_API_KEY
+        sync: false
+      # 32+ char shared secret — must match MARKET_GATEWAY_SECRET in the app.
+      - key: MARKET_GATEWAY_SECRET
+        sync: false
+      # Comma-separated app origins allowed to connect, e.g.
+      # https://your-app.vercel.app
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO

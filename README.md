@@ -95,6 +95,36 @@ pnpm db:migrate
 
 See `services/market-gateway/README.md` for gateway setup.
 
+## Cloud deploy
+
+The app and the live gateway deploy as two services.
+
+**App → Vercel.** Import the repo at vercel.com (it auto-detects Next.js), set
+the environment variables below, and deploy. Historical data works immediately.
+
+```
+DATABENTO_API_KEY=        # enables real Databento history
+VOLTIS_ADMIN_EMAIL=       # sign-in email
+VOLTIS_ADMIN_PASSWORD=    # sign-in password
+VOLTIS_SESSION_SECRET=    # 32+ characters
+# Add once the gateway is live (below):
+MARKET_GATEWAY_URL=wss://<gateway-host>/ws
+MARKET_GATEWAY_SECRET=    # 32+ chars, identical to the gateway's
+```
+
+The history route sets `maxDuration = 60` so deep pulls don't hit the
+serverless timeout.
+
+**Gateway → Render.** Vercel can't host a long-lived WebSocket, so the Python
+live gateway runs separately. On render.com choose **New → Blueprint** and pick
+this repo; `render.yaml` provisions an always-on Docker service from
+`services/market-gateway`. Set `DATABENTO_API_KEY`, a 32+ char
+`MARKET_GATEWAY_SECRET` (identical to the app's), and `ALLOWED_ORIGINS` (your
+Vercel origin). Then point the app's `MARKET_GATEWAY_URL` at
+`wss://<render-host>/ws`. Railway works too — set the service root to
+`services/market-gateway`. Live streaming needs a Databento **Live**
+entitlement for GLBX.MDP3.
+
 ## Architecture
 
 - `src/components/trading-workspace.tsx`: responsive product shell
