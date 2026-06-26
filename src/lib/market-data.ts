@@ -181,36 +181,70 @@ export class DemoMarketDataProvider implements MarketDataProvider {
 export class DatabentoHistoricalProvider implements MarketDataProvider {
   constructor(private readonly apiKey: string) {}
 
+  private requestRange(
+    family: SymbolFamily,
+    schema: string,
+    start: string,
+    end: string,
+  ) {
+    const body = new URLSearchParams({
+      dataset: "GLBX.MDP3",
+      symbols: CONTINUOUS_SYMBOL[family],
+      stype_in: "continuous",
+      schema,
+      start,
+      end,
+      encoding: "json",
+      pretty_px: "true",
+      pretty_ts: "true",
+      map_symbols: "true",
+    });
+    return fetch("https://hist.databento.com/v0/timeseries.get_range", {
+      method: "POST",
+      headers: {
+        authorization: `Basic ${Buffer.from(`${this.apiKey}:`).toString("base64")}`,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body,
+      cache: "no-store",
+    });
+  }
+
   async getHistory(
     family: SymbolFamily,
     timeframe: Timeframe,
     count = 260,
   ): Promise<MarketHistory> {
     const request = historyRequest(timeframe, count);
-    const body = new URLSearchParams({
-      dataset: "GLBX.MDP3",
-      symbols: CONTINUOUS_SYMBOL[family],
-      stype_in: "continuous",
-      schema: request.source,
-      start: request.start,
-      end: request.end,
-      encoding: "json",
-      pretty_px: "true",
-      pretty_ts: "true",
-      map_symbols: "true",
-    });
-    const response = await fetch(
-      "https://hist.databento.com/v0/timeseries.get_range",
-      {
-        method: "POST",
-        headers: {
-          authorization: `Basic ${Buffer.from(`${this.apiKey}:`).toString("base64")}`,
-          "content-type": "application/x-www-form-urlencoded",
-        },
-        body,
-        cache: "no-store",
-      },
+    let range = { start: request.start, end: request.end };
+    let response = await this.requestRange(
+      family,
+      request.source,
+      range.start,
+      range.end,
     );
+
+    // Databento finalizes bars with a short lag, so a request whose `end`
+    // (or, for long lookbacks, `start`) sits outside the available window is
+    // rejected wholesale with HTTP 422. The error names the available
+    // boundary; clamp to it and retry rather than dropping to the demo feed.
+    // Two attempts cover the case where both ends are out of range.
+    for (let attempt = 0; attempt < 2 && response.status === 422; attempt += 1) {
+      const message = await response.text();
+      const clamped = clampedRangeFromError(message, range);
+      if (!clamped) {
+        throw new Error(
+          `Databento history request failed (422): ${message.slice(0, 240)}`,
+        );
+      }
+      range = clamped;
+      response = await this.requestRange(
+        family,
+        request.source,
+        range.start,
+        range.end,
+      );
+    }
 
     if (!response.ok) {
       const message = await response.text();
@@ -237,6 +271,46 @@ export class DatabentoHistoricalProvider implements MarketDataProvider {
       bars,
     };
   }
+}
+
+/**
+ * Databento's "available range" errors (422) report the dataset boundary in
+ * their message, e.g. `…has data available up to '2026-06-26 04:00:00+00:00'`.
+ * Parse that boundary and clamp the offending side of the window so the next
+ * request lands inside the available range. Returns null when the error is not
+ * a recoverable range error.
+ */
+export function clampedRangeFromError(
+  errorBody: string,
+  range: { start: string; end: string },
+): { start: string; end: string } | null {
+  let detail: { case?: string; message?: string } | undefined;
+  try {
+    detail = (JSON.parse(errorBody) as { detail?: typeof detail }).detail;
+  } catch {
+    return null;
+  }
+  if (!detail || typeof detail.message !== "string") {
+    return null;
+  }
+
+  const toIso = (raw: string) => {
+    // Databento prints `YYYY-MM-DD HH:MM:SS+00:00`; normalize the space to `T`.
+    const date = new Date(raw.replace(" ", "T"));
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  };
+
+  if (detail.case === "data_end_after_available_end") {
+    const match = detail.message.match(/up to '([^']+)'/);
+    const end = match ? toIso(match[1]) : null;
+    return end ? { start: range.start, end } : null;
+  }
+  if (detail.case === "data_start_before_available_start") {
+    const match = detail.message.match(/from '([^']+)'/);
+    const start = match ? toIso(match[1]) : null;
+    return start ? { start, end: range.end } : null;
+  }
+  return null;
 }
 
 export function getMarketDataProvider(): MarketDataProvider {
