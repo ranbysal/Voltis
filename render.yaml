@@ -11,11 +11,11 @@ services:
   - type: web
     name: voltis-market-gateway
     runtime: docker
-    dockerfilePath: ./services/market-gateway/Dockerfile
-    dockerContext: ./services/market-gateway
+    rootDir: services/market-gateway
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     plan: starter
     healthCheckPath: /health
-    autoDeploy: true
     envVars:
       # Your Databento API key (same one the app uses). Entered in the dashboard.
       - key: DATABENTO_API_KEY
@@ -24,7 +24,7 @@ services:
       - key: MARKET_GATEWAY_SECRET
         sync: false
       # Comma-separated app origins allowed to connect, e.g.
-      # https://your-app.vercel.app
+      # https://yazan-seven.vercel.app
       - key: ALLOWED_ORIGINS
         sync: false
       - key: LOG_LEVEL
