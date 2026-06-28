@@ -1,14 +1,9 @@
 "use client";
 
 import gsap from "gsap";
-import { CustomEase } from "gsap/CustomEase";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
-import {
-  BOOT_FLAG,
-  BOOT_TIME_SCALE,
-} from "@/components/transition/boot-config";
 import { BootFrame } from "@/components/transition/boot-frame";
 import { BackgroundTexture } from "./background-texture";
 import { HeroPortrait } from "./hero-portrait";
@@ -17,18 +12,14 @@ import { IntroGrid } from "./intro-grid";
 import { Navbar } from "./navbar";
 import { CANVAS_H, CANVAS_W, u } from "./units";
 
-gsap.registerPlugin(CustomEase);
-const frameEase = CustomEase.create("v-frame", "0.22,1,0.36,1");
-
 export function LandingPage() {
   const router = useRouter();
   const rootRef = useRef<HTMLElement>(null);
-  const leavingRef = useRef(false);
-  const [scrambling, setScrambling] = useState(false);
+  const [scrambling] = useState(false);
 
   useEffect(() => {
-    router.prefetch("/workspace");
     router.prefetch("/login");
+    router.prefetch("/viewer");
   }, [router]);
 
   /* ----- page-load reveal (grid blocks / hero scale / masked nav) ----- */
@@ -96,115 +87,6 @@ export function LandingPage() {
     return () => ctx.revert();
   }, []);
 
-  /**
-   * startTransition(): the single CTA entry point. Runs Beat 1 (scramble-
-   * dissolve) and Beats 2-3 (registration marks + frame draw) on one master
-   * timeline, then hands off to the dashboard which mounts behind the
-   * already-drawn frame and assembles panel-by-panel (Beat 4).
-   */
-  function startBootTransition() {
-    if (leavingRef.current) {
-      return;
-    }
-    leavingRef.current = true;
-    const root = rootRef.current;
-
-    try {
-      window.sessionStorage.setItem(BOOT_FLAG, "1");
-    } catch {
-      // sessionStorage unavailable; the dashboard simply loads plain
-    }
-
-    const reduceMotion = window.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
-    if (reduceMotion || !root) {
-      // 250ms crossfade instead of the full choreography. The dashboard mounts
-      // via a client-side route change, so the pre-paint script never runs —
-      // set the reduced-motion flag here so the dashboard fades in assembled.
-      document.documentElement.setAttribute("data-vboot-reduced", "1");
-      gsap.to(root ?? "main", {
-        autoAlpha: 0,
-        duration: 0.25,
-        ease: "power1.in",
-        onComplete: () => router.push("/workspace"),
-      });
-      return;
-    }
-
-    // Hide the dashboard before it mounts. router.push is a client-side nav, so
-    // the workspace pre-paint script does not execute; setting data-vboot on the
-    // shared document carries the "hidden until boot" state across the handoff.
-    document.documentElement.setAttribute("data-vboot", "1");
-
-    // Beat 1: text decode-scramble (RAF-driven, same preset clock)
-    setScrambling(true);
-
-    const tl = gsap.timeline({
-      onComplete: () => router.push("/workspace"),
-    });
-    tl.timeScale(BOOT_TIME_SCALE);
-
-    tl.set(root, { pointerEvents: "none" }, 0);
-
-    // Beat 1: the page disintegrates forward (fade + slight scale + blur)
-    tl.to(
-      "#v-portrait",
-      {
-        autoAlpha: 0,
-        scale: 1.04,
-        filter: "blur(6px)",
-        duration: 0.8,
-        ease: "power2.in",
-        transformOrigin: "50% 30%",
-      },
-      0.15,
-    );
-    tl.to(
-      "#v-texture",
-      { autoAlpha: 0, duration: 0.9, ease: "power1.in" },
-      0.3,
-    );
-    // safety fade as the last scrambled glyphs drop out
-    tl.to(
-      "#v-hero h1",
-      { autoAlpha: 0, duration: 0.25, ease: "power1.in" },
-      1.05,
-    );
-
-    // Beats 2-3 prep: frame container on, but marks/strokes hidden
-    tl.set("#v-bootframe [data-boot-mark]", { opacity: 0 }, 0);
-    tl.set(
-      "#v-bootframe [data-frame-seg], #v-bootframe [data-frame-bracket]",
-      { strokeDasharray: 1, strokeDashoffset: 1 },
-      0,
-    );
-    tl.set("#v-bootframe [data-boot-status]", { autoAlpha: 0 }, 0);
-    tl.set("#v-bootframe", { autoAlpha: 1 }, 0.1);
-
-    // Beat 2 (overlaps end of Beat 1): registration marks blink in
-    tl.to(
-      "#v-bootframe [data-boot-mark]",
-      { opacity: 1, duration: 0.05, ease: "steps(1)", stagger: 0.05 },
-      1.15,
-    );
-
-    // Beat 3: corner brackets, then edge strokes extend to meet
-    tl.to(
-      "#v-bootframe [data-frame-bracket]",
-      { strokeDashoffset: 0, duration: 0.2, ease: frameEase, stagger: 0.04 },
-      1.6,
-    );
-    tl.to(
-      "#v-bootframe [data-frame-seg]",
-      { strokeDashoffset: 0, duration: 0.5, ease: frameEase, stagger: 0.025 },
-      1.72,
-    );
-
-    // small settle hold before the route hand-off
-    tl.set({}, {}, 2.35);
-  }
-
   return (
     <main
       ref={rootRef}
@@ -223,7 +105,7 @@ export function LandingPage() {
         </div>
         <Navbar
           onHome={() => router.push("/")}
-          onViewer={startBootTransition}
+          onViewer={() => router.push("/viewer")}
           onLogin={() => router.push("/login")}
           scrambling={scrambling}
         />

@@ -7,7 +7,7 @@ import { ms } from "@/components/transition/boot-config";
 import { useBoot, useBootPhase } from "@/components/transition/boot-context";
 import { useCountUp } from "@/components/transition/use-count-up";
 
-type TickerQuote = {
+export type TickerQuote = {
   symbol: string;
   note?: string;
   price: number;
@@ -95,9 +95,15 @@ function TickerCell({ quote, price }: { quote: TickerQuote; price: number }) {
   );
 }
 
-export function TickerStrip({ livePrice }: { livePrice?: number | null }) {
+export function TickerStrip({
+  livePrice,
+  quotes: initialQuotes = BASE_QUOTES,
+}: {
+  livePrice?: number | null;
+  quotes?: TickerQuote[];
+}) {
   const boot = useBoot();
-  const [quotes, setQuotes] = useState(BASE_QUOTES);
+  const [quotes, setQuotes] = useState(initialQuotes);
 
   // Drift the quotes while the workspace is live, but freeze them while the
   // boot choreography owns the strip so the count-up starts from clean bases.

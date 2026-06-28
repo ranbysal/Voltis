@@ -5,9 +5,12 @@ import {
   ColorType,
   CrosshairMode,
   createChart,
+  createSeriesMarkers,
   LineSeries,
   LineStyle,
+  type AutoscaleInfo,
   type IChartApi,
+  type IPriceLine,
   type ISeriesApi,
   type Time,
   type UTCTimestamp,
@@ -33,6 +36,17 @@ import { cn } from "@/lib/utils";
 
 export type ChartStyle = "candles" | "line";
 
+/** An open position to overlay on the chart (Entry / TP / SL + a marker). */
+export type ChartTrade = {
+  side: "long" | "short";
+  quantity: number;
+  entry: number;
+  takeProfit: number | null;
+  stopLoss: number | null;
+  /** Bar time (unix seconds) the entry marker is pinned to. */
+  entryTime: number;
+};
+
 type MarketChartProps = {
   bars: MarketBar[];
   family: SymbolFamily;
@@ -46,6 +60,8 @@ type MarketChartProps = {
   /** 0..1 sweep that draws the EMA lines left -> right during the boot. */
   emaReveal?: number;
   readOnly?: boolean;
+  /** When set, overlays an open trade (used by the read-only Viewer). */
+  trade?: ChartTrade | null;
   /** When true the Fib tool is armed: click two points to drop a manual fib. */
   drawFib?: boolean;
   onUpdateFib: (id: string, patch: Partial<FibDrawing>) => void;
@@ -179,6 +195,7 @@ export function MarketChart({
   showEma50 = true,
   emaReveal = 1,
   readOnly = false,
+  trade = null,
   drawFib = false,
   onUpdateFib,
   onCreateFib,
@@ -396,7 +413,10 @@ export function MarketChart({
         })),
       );
     }
-  }, [bars, family, chartStyle]);
+    // `theme` is a dependency because the init effect recreates the price
+    // series on a theme swap; without it the new series would never be fed
+    // its bar data (candles would vanish in the swapped theme).
+  }, [bars, family, chartStyle, theme]);
 
   // Keep the Fibonacci overlay glued to the candles. lightweight-charts
   // repaints its canvas on every pan/zoom/scale frame, but the SVG overlay is
@@ -470,6 +490,89 @@ export function MarketChart({
       to: bars.length + 7,
     });
   }, [bars.length, family, timeframe, chartStyle]);
+
+  // Trade overlay: Entry / Take Profit / Stop Loss price lines plus a position
+  // marker, for the read-only Viewer. A no-op when `trade` is null (the admin
+  // chart passes nothing here). Cleanup is guarded because a theme/style swap
+  // disposes the series before this effect's cleanup runs.
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series || !trade) {
+      return;
+    }
+
+    const dark = theme === "dark";
+    const entryColor = dark ? "#5b9bff" : "#2f6fe0";
+    const tpColor = dark ? "#00FFEF" : "#04a35e";
+    const slColor = dark ? "#ff5c64" : "#e5484d";
+    const fmt = (value: number) =>
+      value.toLocaleString("en-US", {
+        minimumFractionDigits: family === "YM" ? 0 : 2,
+        maximumFractionDigits: family === "YM" ? 0 : 2,
+      });
+
+    const lines: IPriceLine[] = [];
+    const addLine = (price: number, color: string, title: string) =>
+      lines.push(
+        series.createPriceLine({
+          price,
+          color,
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title,
+        }),
+      );
+
+    if (trade.takeProfit !== null) {
+      addLine(trade.takeProfit, tpColor, "Take Profit");
+    }
+    addLine(trade.entry, entryColor, "Entry");
+    if (trade.stopLoss !== null) {
+      addLine(trade.stopLoss, slColor, "Stop Loss");
+    }
+
+    const bounds = [trade.entry, trade.takeProfit, trade.stopLoss].filter(
+      (value): value is number => value !== null,
+    );
+    const lo = Math.min(...bounds);
+    const hi = Math.max(...bounds);
+    series.applyOptions({
+      autoscaleInfoProvider: (original: () => AutoscaleInfo | null) => {
+        const result = original();
+        if (!result || !result.priceRange) {
+          return { priceRange: { minValue: lo, maxValue: hi } };
+        }
+        return {
+          ...result,
+          priceRange: {
+            minValue: Math.min(result.priceRange.minValue, lo),
+            maxValue: Math.max(result.priceRange.maxValue, hi),
+          },
+        };
+      },
+    });
+
+    const markers = createSeriesMarkers(series, [
+      {
+        time: trade.entryTime as UTCTimestamp,
+        position: "belowBar",
+        shape: trade.side === "long" ? "arrowUp" : "arrowDown",
+        color: entryColor,
+        text: `${trade.side === "long" ? "Long" : "Short"} ${trade.quantity} @ ${fmt(trade.entry)}`,
+      },
+    ]);
+
+    return () => {
+      try {
+        lines.forEach((line) => series.removePriceLine(line));
+        markers.detach();
+        series.applyOptions({ autoscaleInfoProvider: undefined });
+      } catch {
+        // series disposed by a theme/style swap; chart.remove() handles cleanup
+      }
+    };
+  }, [trade, theme, chartStyle, family, bars]);
 
   function handleAnchorMove(
     event: ReactPointerEvent<SVGCircleElement>,
