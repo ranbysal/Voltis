@@ -106,31 +106,51 @@ export function ViewerWorkspace() {
   }, [theme]);
 
   // Deterministic demo bars (seeded), shifted so the position sits "live": the
-  // last close lands a touch above entry, i.e. a small unrealized profit.
+  // last close lands a touch above entry, i.e. a small unrealized profit. A deep
+  // block of older bars is spliced onto the front — matched in price and time at
+  // the seam — so viewers can scroll back through weeks of history continuously
+  // (fixLeftEdge keeps it void-free) without altering the recent candles or any
+  // of the position numbers.
   const { bars, current, entryTime } = useMemo(() => {
+    const step = 30 * 60;
     const raw = generateMarketBars("NQ", "30m", 220);
     const shift = TRADE.entry + 25.5 - raw[raw.length - 1].close;
-    const shifted = raw.map((bar) => ({
+    const recent = raw.map((bar) => ({
       ...bar,
       open: bar.open + shift,
       high: bar.high + shift,
       low: bar.low + shift,
       close: bar.close + shift,
     }));
+
+    // Older history: a longer demo run, re-priced so its final close meets the
+    // first recent open, and re-timed to sit immediately before it.
+    const olderRaw = generateMarketBars("NQ", "30m", 1300);
+    const olderShift = recent[0].open - olderRaw[olderRaw.length - 1].close;
+    const older = olderRaw.slice(0, -1).map((bar, index, arr) => ({
+      open: bar.open + olderShift,
+      high: bar.high + olderShift,
+      low: bar.low + olderShift,
+      close: bar.close + olderShift,
+      volume: bar.volume,
+      time: recent[0].time - (arr.length - index) * step,
+    }));
+    const merged = [...older, ...recent];
+
     // Pin the entry marker to the recent bar nearest the entry price.
-    let entryIdx = shifted.length - 8;
+    let entryIdx = merged.length - 8;
     let best = Infinity;
-    for (let i = Math.max(0, shifted.length - 36); i < shifted.length - 2; i += 1) {
-      const diff = Math.abs(shifted[i].close - TRADE.entry);
+    for (let i = Math.max(0, merged.length - 36); i < merged.length - 2; i += 1) {
+      const diff = Math.abs(merged[i].close - TRADE.entry);
       if (diff < best) {
         best = diff;
         entryIdx = i;
       }
     }
     return {
-      bars: shifted,
-      current: shifted[shifted.length - 1].close,
-      entryTime: shifted[entryIdx].time,
+      bars: merged,
+      current: merged[merged.length - 1].close,
+      entryTime: merged[entryIdx].time,
     };
   }, []);
 
