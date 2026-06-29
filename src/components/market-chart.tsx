@@ -36,6 +36,12 @@ import { cn } from "@/lib/utils";
 
 export type ChartStyle = "candles" | "line";
 
+// Start loading older bars while this many are still buffered to the left of the
+// viewport, so the (multi-second) fetch resolves before the user reaches the
+// edge. On initial load the seed window is short enough that this also kicks a
+// one-shot proactive prefetch, building a deep buffer up front.
+const LOAD_OLDER_BUFFER = 160;
+
 /** An open position to overlay on the chart (Entry / TP / SL + a marker). */
 export type ChartTrade = {
   side: "long" | "short";
@@ -69,6 +75,8 @@ type MarketChartProps = {
   onLoadOlder?: (oldestBarTime: number) => void;
   /** False once the owner has reached the start of history (stops requests). */
   canLoadOlder?: boolean;
+  /** True while an older-history fetch is in flight (shows a left-edge hint). */
+  isLoadingOlder?: boolean;
   /** True while the boot choreography owns the chart (forces a right-edge view). */
   bootActive?: boolean;
   /** When true the Fib tool is armed: click two points to drop a manual fib. */
@@ -207,6 +215,7 @@ export function MarketChart({
   trade = null,
   onLoadOlder,
   canLoadOlder = false,
+  isLoadingOlder = false,
   bootActive = false,
   drawFib = false,
   onUpdateFib,
@@ -306,6 +315,10 @@ export function MarketChart({
         rightOffset: 8,
         barSpacing: 7,
         minBarSpacing: 2,
+        // Don't let the user drag past the oldest loaded bar into empty space:
+        // combined with loading older bars ahead of the edge, scrolling history
+        // stays continuous (no void, no post-load jump).
+        fixLeftEdge: true,
       },
       crosshair: {
         mode: CrosshairMode.Normal,
@@ -543,25 +556,40 @@ export function MarketChart({
     prevFirstTimeRef.current = firstTime;
   }, [bars, family, timeframe, chartStyle, bootActive]);
 
-  // Fire onLoadOlder when the user pans within ~10 bars of the left edge.
-  // Concurrency/debounce is handled by the owner (one request in flight); firing
-  // repeatedly is harmless because the owner early-returns while loading.
+  // Fire onLoadOlder EARLY — while there's still a buffer of bars to the left of
+  // the viewport — so the (slow) fetch resolves before the user reaches the
+  // edge and history scrolls continuously. Uses the library's own
+  // barsInLogicalRange().barsBefore signal (the official infinite-history
+  // pattern). Concurrency/debounce is the owner's job (one request in flight),
+  // so firing repeatedly is harmless.
   useEffect(() => {
     const chart = chartRef.current;
-    if (!chart || !onLoadOlder) {
+    const series = seriesRef.current;
+    if (!chart || !series || !onLoadOlder) {
       return;
     }
     const ts = chart.timeScale();
-    const handler = (range: { from: number; to: number } | null) => {
-      if (!range || bars.length === 0 || !canLoadOlder) {
+    const maybeLoad = () => {
+      if (bars.length === 0 || !canLoadOlder) {
         return;
       }
-      if (range.from <= 10) {
+      const range = ts.getVisibleLogicalRange();
+      if (!range) {
+        return;
+      }
+      const info = series.barsInLogicalRange(range);
+      // barsBefore < BUFFER (or negative = already showing whitespace) → top up.
+      if (info && info.barsBefore < LOAD_OLDER_BUFFER) {
         onLoadOlder(bars[0].time);
       }
     };
-    ts.subscribeVisibleLogicalRangeChange(handler);
-    return () => ts.unsubscribeVisibleLogicalRangeChange(handler);
+    // Only react to real range changes (user pan/zoom). We deliberately do NOT
+    // call maybeLoad() eagerly here: right after a prepend the visible-range
+    // shift hasn't settled yet, so an immediate re-check would read a stale
+    // (small) barsBefore and fire another load — chaining requests. The owner
+    // does a single proactive prefetch for the initial buffer instead.
+    ts.subscribeVisibleLogicalRangeChange(maybeLoad);
+    return () => ts.unsubscribeVisibleLogicalRangeChange(maybeLoad);
     // theme/chartStyle are deps because the init effect recreates the chart (and
     // its timeScale) on those changes; without them the subscription would be
     // left on the disposed chart and back-scroll would silently stop working.
@@ -1000,6 +1028,26 @@ export function MarketChart({
         />
         {dataLabel}
       </div>
+
+      {/* Left-edge hint while older bars stream in, so the brief edge-resistance
+          reads as intentional rather than a frozen chart. */}
+      {isLoadingOlder ? (
+        <div
+          className={cn(
+            "pointer-events-none absolute left-3 top-1/2 z-20 -translate-y-1/2 flex items-center gap-1.5 rounded-md border px-2 py-1 font-mono text-[9px] shadow-sm backdrop-blur",
+            theme === "dark"
+              ? "border-[#15201f] bg-[#0b1212]/92 text-[#8fa9a4]"
+              : "border-[#e6e5e1] bg-[#e4e0df]/92 text-[#6d7277]",
+          )}
+        >
+          <span
+            className={cn(
+              "h-2.5 w-2.5 animate-spin rounded-full border border-current border-t-transparent",
+            )}
+          />
+          Loading history
+        </div>
+      ) : null}
     </div>
   );
 }

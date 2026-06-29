@@ -265,6 +265,7 @@ export function TradingWorkspace() {
   });
   const [emaReveal, setEmaReveal] = useState(1);
   const [hasMoreHistory, setHasMoreHistory] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
   const historyRequestRef = useRef(0);
   const activeContractRef = useRef(DEFAULT_MARKET_META.activeContract);
@@ -287,6 +288,9 @@ export function TradingWorkspace() {
   // the offline 60s refresh (which replaces the whole window) can skip and not
   // yank them back to the latest.
   const pagedBackRef = useRef(false);
+  // Request generation that has already had its one proactive prefetch, so we
+  // build the initial buffer exactly once per family/timeframe (no chaining).
+  const prefetchedGenRef = useRef(-1);
 
   /* ----- boot choreography (Beat 4: panel-by-panel assembly) -----
      The landing page runs Beats 1-3 (scramble-dissolve, registration
@@ -626,9 +630,13 @@ export function TradingWorkspace() {
       const gen = requestGenRef.current;
       const { family, timeframe } = selectionRef.current;
       olderLoadingRef.current = true;
+      setLoadingOlder(true);
       try {
+        // Pull a generous chunk per request so the user can scroll a long way
+        // between the (slow) Databento round-trips and history feels continuous.
+        const chunk = Math.min(1500, barCountFor(timeframe) * 2);
         const response = await fetch(
-          `/api/market/history?family=${family}&timeframe=${timeframe}&before=${beforeTime}&count=${barCountFor(timeframe)}`,
+          `/api/market/history?family=${family}&timeframe=${timeframe}&before=${beforeTime}&count=${chunk}`,
           { cache: "no-store" },
         );
         if (!response.ok || gen !== requestGenRef.current) {
@@ -659,10 +667,31 @@ export function TradingWorkspace() {
         if (gen === requestGenRef.current) {
           olderLoadingRef.current = false;
         }
+        setLoadingOlder(false);
       }
     },
     [hasMoreHistory],
   );
+
+  // Proactive prefetch: once per family/timeframe, after the initial window has
+  // loaded, pull one extra chunk in the background so the first drag-back is
+  // instant. Gen-guarded so it fires exactly once per context (no chaining); the
+  // user-driven loads (chart subscription) take over from there.
+  useEffect(() => {
+    if (
+      !hydrated ||
+      marketLoading ||
+      bars.length === 0 ||
+      !hasMoreHistory ||
+      prefetchedGenRef.current === requestGenRef.current
+    ) {
+      return;
+    }
+    prefetchedGenRef.current = requestGenRef.current;
+    const oldest = bars[0].time;
+    const timer = window.setTimeout(() => void loadOlderHistory(oldest), 350);
+    return () => window.clearTimeout(timer);
+  }, [hydrated, marketLoading, bars, hasMoreHistory, loadOlderHistory]);
 
   useEffect(() => {
     const stored = hasSavedWorkspace();
@@ -1670,7 +1699,8 @@ export function TradingWorkspace() {
                 emaReveal={emaReveal}
                 drawFib={fibToolActive}
                 onLoadOlder={(oldestTime) => void loadOlderHistory(oldestTime)}
-                canLoadOlder={hasMoreHistory}
+                canLoadOlder={hasMoreHistory && !marketLoading}
+                isLoadingOlder={loadingOlder}
                 bootActive={boot.active}
                 onUpdateFib={updateFib}
                 onCreateFib={createManualFib}
