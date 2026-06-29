@@ -25,6 +25,13 @@ export interface MarketDataProvider {
     family: SymbolFamily,
     timeframe: Timeframe,
     count?: number,
+    /**
+     * Exclusive upper bound (unix ms) for back-scroll. When set, the provider
+     * returns the `count` bars that sit immediately BEFORE this instant, and an
+     * empty `bars` array once the request runs past the dataset's start (the
+     * caller reads `bars.length === 0` as "no more history").
+     */
+    beforeMs?: number,
   ): Promise<MarketHistory>;
 }
 
@@ -97,8 +104,15 @@ export function barCountFor(timeframe: Timeframe): number {
   }
 }
 
-export function historyRequest(timeframe: Timeframe, count: number) {
-  const endMs = Date.now() - END_SAFETY_MS;
+export function historyRequest(
+  timeframe: Timeframe,
+  count: number,
+  beforeMs?: number,
+) {
+  // For a back-scroll request the window ends at `beforeMs` (the oldest bar the
+  // client already holds); otherwise it ends a hair behind "now" so the latest
+  // finalized bars are inside Databento's available range.
+  const endMs = beforeMs ?? Date.now() - END_SAFETY_MS;
   const source = sourceSchemaFor(timeframe);
   const daysPerBar: Record<Timeframe, number> = {
     "5m": 5 / 1_440,
@@ -209,7 +223,18 @@ export class DemoMarketDataProvider implements MarketDataProvider {
     family: SymbolFamily,
     timeframe: Timeframe,
     count = barCountFor(timeframe),
+    beforeMs?: number,
   ): Promise<MarketHistory> {
+    // Generate a deep deterministic sequence once, then slice the window the
+    // caller asked for. Back-scroll (`beforeMs`) walks left through it and
+    // yields `[]` past the start so the client stops requesting more.
+    const deep = generateMarketBars(family, timeframe, count * 6);
+    const bars =
+      beforeMs === undefined
+        ? deep.slice(-count)
+        : deep
+            .filter((bar) => bar.time < Math.floor(beforeMs / 1000))
+            .slice(-count);
     return {
       provider: "demo",
       session: "ETH",
@@ -218,7 +243,7 @@ export class DemoMarketDataProvider implements MarketDataProvider {
       activeContract: `${family}M6`,
       delayed: true,
       sourceSchema: "ohlcv-1m",
-      bars: generateMarketBars(family, timeframe, count),
+      bars,
     };
   }
 }
@@ -259,8 +284,9 @@ export class DatabentoHistoricalProvider implements MarketDataProvider {
     family: SymbolFamily,
     timeframe: Timeframe,
     count = barCountFor(timeframe),
+    beforeMs?: number,
   ): Promise<MarketHistory> {
-    const request = historyRequest(timeframe, count);
+    const request = historyRequest(timeframe, count, beforeMs);
     let range = { start: request.start, end: request.end };
     let response = await this.requestRange(
       family,
@@ -300,6 +326,21 @@ export class DatabentoHistoricalProvider implements MarketDataProvider {
 
     const records = parseDatabentoJsonLines(await response.text());
     if (records.length === 0) {
+      // A back-scroll request that runs past the dataset's start legitimately
+      // returns nothing — surface it as an empty window so the client stops
+      // asking. An empty *initial* load is still a real failure.
+      if (beforeMs !== undefined) {
+        return {
+          provider: "databento",
+          session: "ETH",
+          adjustment: "back-adjusted",
+          continuousSymbol: CONTINUOUS_SYMBOL[family],
+          activeContract: CONTINUOUS_SYMBOL[family],
+          delayed: true,
+          sourceSchema: request.source,
+          bars: [],
+        };
+      }
       throw new Error("Databento returned no bars for the requested range");
     }
 

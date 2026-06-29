@@ -179,9 +179,12 @@ export function applyLiveBar(
   const index = current.findIndex((bar) => bar.time === time);
 
   if (index === -1) {
+    // Keep a generous tail: a back-scroll can grow `current` to a few thousand
+    // bars, and a tighter cap would silently drop that prepended history on the
+    // next live tick.
     return [...current, { ...sourceBar, time }]
       .sort((a, b) => a.time - b.time)
-      .slice(-600);
+      .slice(-5000);
   }
 
   const existing = current[index];

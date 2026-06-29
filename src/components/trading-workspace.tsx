@@ -48,7 +48,7 @@ import {
   type WorkspaceState,
 } from "@/lib/domain";
 import { ApiExecutionProvider } from "@/lib/execution";
-import type { MarketDataMeta } from "@/lib/market-data";
+import { barCountFor, type MarketDataMeta } from "@/lib/market-data";
 import { applyLiveBar } from "@/lib/market-aggregation";
 import {
   detectFibAnchors,
@@ -264,6 +264,7 @@ export function TradingWorkspace() {
     phase: "done",
   });
   const [emaReveal, setEmaReveal] = useState(1);
+  const [hasMoreHistory, setHasMoreHistory] = useState(true);
   const mainRef = useRef<HTMLElement>(null);
   const historyRequestRef = useRef(0);
   const activeContractRef = useRef(DEFAULT_MARKET_META.activeContract);
@@ -271,6 +272,17 @@ export function TradingWorkspace() {
     family: DEFAULT_WORKSPACE.family,
     timeframe: DEFAULT_WORKSPACE.timeframe,
   });
+  // Back-scroll bookkeeping.
+  // - seenBarTimesRef: every bar time currently held, so a prepend can dedupe.
+  // - olderLoadingRef: one back-scroll request in flight at a time.
+  // - requestGenRef: bumped on every family/timeframe change so an in-flight
+  //   older-history response for a stale context is discarded.
+  // - seenContractsRef: last active contract per family, to tell a true contract
+  //   roll (reload history) from the per-reconnect mapping snapshot (do nothing).
+  const seenBarTimesRef = useRef<Set<number>>(new Set());
+  const olderLoadingRef = useRef(false);
+  const requestGenRef = useRef(0);
+  const seenContractsRef = useRef<Map<SymbolFamily, string>>(new Map());
 
   /* ----- boot choreography (Beat 4: panel-by-panel assembly) -----
      The landing page runs Beats 1-3 (scramble-dissolve, registration
@@ -557,6 +569,8 @@ export function TradingWorkspace() {
           return;
         }
         setBars(history.bars);
+        seenBarTimesRef.current = new Set(history.bars.map((bar) => bar.time));
+        setHasMoreHistory(history.bars.length > 0);
         activeContractRef.current = history.activeContract;
         setMarketMeta({
           provider: history.provider,
@@ -571,7 +585,10 @@ export function TradingWorkspace() {
         if (historyRequestRef.current !== requestId) {
           return;
         }
-        setBars(generateMarketBars(family, timeframe));
+        const demoBars = generateMarketBars(family, timeframe);
+        setBars(demoBars);
+        seenBarTimesRef.current = new Set(demoBars.map((bar) => bar.time));
+        setHasMoreHistory(true);
         activeContractRef.current = `${family}M6`;
         setMarketMeta({
           ...DEFAULT_MARKET_META,
@@ -585,6 +602,54 @@ export function TradingWorkspace() {
       }
     },
     [],
+  );
+
+  // Back-scroll: fetch the bars immediately before the oldest one we hold and
+  // prepend them. Guarded so only one request runs at a time, responses for a
+  // stale family/timeframe are dropped, and we stop at the dataset start.
+  const loadOlderHistory = useCallback(
+    async (beforeTime: number) => {
+      if (olderLoadingRef.current || !hasMoreHistory) {
+        return;
+      }
+      const gen = requestGenRef.current;
+      const { family, timeframe } = selectionRef.current;
+      olderLoadingRef.current = true;
+      try {
+        const response = await fetch(
+          `/api/market/history?family=${family}&timeframe=${timeframe}&before=${beforeTime}&count=${barCountFor(timeframe)}`,
+          { cache: "no-store" },
+        );
+        if (!response.ok || gen !== requestGenRef.current) {
+          return;
+        }
+        const history = (await response.json()) as { bars: MarketBar[] };
+        if (gen !== requestGenRef.current) {
+          return;
+        }
+        const older = history.bars.filter(
+          (bar) =>
+            bar.time < beforeTime && !seenBarTimesRef.current.has(bar.time),
+        );
+        if (older.length === 0) {
+          setHasMoreHistory(false);
+          return;
+        }
+        for (const bar of older) {
+          seenBarTimesRef.current.add(bar.time);
+        }
+        setBars((current) =>
+          [...older, ...current].sort((a, b) => a.time - b.time),
+        );
+      } catch {
+        // transient network error; the next scroll re-triggers the load
+      } finally {
+        if (gen === requestGenRef.current) {
+          olderLoadingRef.current = false;
+        }
+      }
+    },
+    [hasMoreHistory],
   );
 
   useEffect(() => {
@@ -651,6 +716,12 @@ export function TradingWorkspace() {
       family: workspace.family,
       timeframe: workspace.timeframe,
     };
+    // New context: discard any in-flight older-history response. `hasMoreHistory`
+    // is re-armed by the loadMarketHistory call that accompanies every
+    // family/timeframe change, so it is not reset here (avoids a redundant
+    // setState inside an effect).
+    requestGenRef.current += 1;
+    olderLoadingRef.current = false;
   }, [workspace.family, workspace.timeframe]);
 
   useEffect(() => {
@@ -719,8 +790,11 @@ export function TradingWorkspace() {
             return;
           }
 
-          const contractChanged =
-            message.activeContract !== activeContractRef.current;
+          const prevContract = seenContractsRef.current.get(message.family);
+          const isRoll =
+            prevContract !== undefined &&
+            prevContract !== message.activeContract;
+          seenContractsRef.current.set(message.family, message.activeContract);
           activeContractRef.current = message.activeContract;
           setMarketMeta((current) => ({
             ...current,
@@ -731,11 +805,17 @@ export function TradingWorkspace() {
             activeContract: message.activeContract,
           }));
 
-          if (message.type === "mapping" && contractChanged) {
-            void loadMarketHistory(
-              selectionRef.current.family,
-              selectionRef.current.timeframe,
-            );
+          if (message.type === "mapping") {
+            // Only a genuine contract roll re-pulls the back-adjusted window.
+            // The mapping snapshot the gateway replays on every (re)connect
+            // carries the SAME contract — reloading on it would reset
+            // `delayed: true` and bounce the label LIVE -> HISTORICAL forever.
+            if (isRoll) {
+              void loadMarketHistory(
+                selectionRef.current.family,
+                selectionRef.current.timeframe,
+              );
+            }
             return;
           }
 
@@ -896,12 +976,20 @@ export function TradingWorkspace() {
   const nqPnl = 10.5 * 20 * 4;
   const openPnl = nqPnl + 284 - 45.5;
 
+  // LIVE requires both an open gateway stream AND a non-delayed mark; otherwise
+  // Databento data is shown as HISTORICAL. The demo feed reads "CONNECTING LIVE
+  // DATA" only while the first history pull is genuinely in flight.
+  const streamLive = marketStreamStatus === "live";
   const dataLabel =
     marketMeta.provider === "databento"
-      ? `DATABENTO ${marketMeta.delayed ? "HISTORICAL" : "LIVE"}`
+      ? streamLive && !marketMeta.delayed
+        ? "DATABENTO LIVE"
+        : "DATABENTO HISTORICAL"
       : marketStreamStatus === "unavailable"
         ? "DETERMINISTIC DEMO FEED"
-        : "CONNECTING LIVE DATA";
+        : marketLoading
+          ? "CONNECTING LIVE DATA"
+          : "DETERMINISTIC DEMO FEED";
 
   /* ----- actions ----- */
   function patchWorkspace(patch: Partial<WorkspaceState>) {
@@ -1551,6 +1639,9 @@ export function TradingWorkspace() {
                 showEma50={showEma50}
                 emaReveal={emaReveal}
                 drawFib={fibToolActive}
+                onLoadOlder={(oldestTime) => void loadOlderHistory(oldestTime)}
+                canLoadOlder={hasMoreHistory}
+                bootActive={boot.active}
                 onUpdateFib={updateFib}
                 onCreateFib={createManualFib}
               />

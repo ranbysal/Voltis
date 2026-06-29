@@ -62,6 +62,15 @@ type MarketChartProps = {
   readOnly?: boolean;
   /** When set, overlays an open trade (used by the read-only Viewer). */
   trade?: ChartTrade | null;
+  /**
+   * Back-scroll: invoked with the oldest loaded bar time (unix seconds) when the
+   * user pans near the left edge, so the owner can fetch + prepend older bars.
+   */
+  onLoadOlder?: (oldestBarTime: number) => void;
+  /** False once the owner has reached the start of history (stops requests). */
+  canLoadOlder?: boolean;
+  /** True while the boot choreography owns the chart (forces a right-edge view). */
+  bootActive?: boolean;
   /** When true the Fib tool is armed: click two points to drop a manual fib. */
   drawFib?: boolean;
   onUpdateFib: (id: string, patch: Partial<FibDrawing>) => void;
@@ -196,6 +205,9 @@ export function MarketChart({
   emaReveal = 1,
   readOnly = false,
   trade = null,
+  onLoadOlder,
+  canLoadOlder = false,
+  bootActive = false,
   drawFib = false,
   onUpdateFib,
   onCreateFib,
@@ -207,6 +219,11 @@ export function MarketChart({
   >(null);
   const ema20Ref = useRef<ISeriesApi<"Line", Time> | null>(null);
   const ema50Ref = useRef<ISeriesApi<"Line", Time> | null>(null);
+  // Back-scroll bookkeeping: detect prepend vs append/in-place between renders
+  // so we can re-anchor the visible range instead of snapping to the right edge.
+  const prevBarsLenRef = useRef(0);
+  const prevFirstTimeRef = useRef<number | null>(null);
+  const selKeyRef = useRef(`${family}:${timeframe}:${chartStyle}`);
   const [geometry, setGeometry] = useState<FibGeometry[]>([]);
   // Manual fib drawing: first click sets `start`, pointer-move tracks `cursor`,
   // second click finalizes. Points are kept in container-relative pixels.
@@ -479,17 +496,67 @@ export function MarketChart({
     ema50s.setData(ema50Data.slice(0, Math.round(ema50Data.length * reveal)));
   }, [ema20Data, ema50Data, emaReveal, theme, chartStyle]);
 
+  // Visible-range management. Snap to the right edge only on a genuine dataset
+  // change (initial load, family/timeframe/style switch, boot). When older bars
+  // are PREPENDED (back-scroll) we shift the existing window right by exactly the
+  // number of new bars so the user's anchor candles stay put. Appends and
+  // in-place live updates leave the view alone (the chart's own realtime
+  // tracking keeps the right edge in view when the user is already there).
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart || bars.length === 0) {
       return;
     }
+    const ts = chart.timeScale();
+    const firstTime = bars[0].time;
+    const selKey = `${family}:${timeframe}:${chartStyle}`;
+    const selectionChanged = selKey !== selKeyRef.current;
+    const prevLen = prevBarsLenRef.current;
+    const prevFirst = prevFirstTimeRef.current;
+    const isPrepend =
+      !selectionChanged && prevFirst !== null && firstTime < prevFirst;
 
-    chart.timeScale().setVisibleLogicalRange({
-      from: Math.max(0, bars.length - 150),
-      to: bars.length + 7,
-    });
-  }, [bars.length, family, timeframe, chartStyle]);
+    if (selectionChanged || prevLen === 0 || bootActive) {
+      ts.setVisibleLogicalRange({
+        from: Math.max(0, bars.length - 150),
+        to: bars.length + 7,
+      });
+    } else if (isPrepend) {
+      const prepended = bars.length - prevLen;
+      const range = ts.getVisibleLogicalRange();
+      if (range && prepended > 0) {
+        ts.setVisibleLogicalRange({
+          from: range.from + prepended,
+          to: range.to + prepended,
+        });
+      }
+    }
+
+    selKeyRef.current = selKey;
+    prevBarsLenRef.current = bars.length;
+    prevFirstTimeRef.current = firstTime;
+  }, [bars, family, timeframe, chartStyle, bootActive]);
+
+  // Fire onLoadOlder when the user pans within ~10 bars of the left edge.
+  // Concurrency/debounce is handled by the owner (one request in flight); firing
+  // repeatedly is harmless because the owner early-returns while loading.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !onLoadOlder) {
+      return;
+    }
+    const ts = chart.timeScale();
+    const handler = (range: { from: number; to: number } | null) => {
+      if (!range || bars.length === 0 || !canLoadOlder) {
+        return;
+      }
+      if (range.from <= 10) {
+        onLoadOlder(bars[0].time);
+      }
+    };
+    ts.subscribeVisibleLogicalRangeChange(handler);
+    return () => ts.unsubscribeVisibleLogicalRangeChange(handler);
+  }, [bars, onLoadOlder, canLoadOlder]);
 
   // Trade overlay: Entry / Take Profit / Stop Loss price lines plus a position
   // marker, for the read-only Viewer. A no-op when `trade` is null (the admin

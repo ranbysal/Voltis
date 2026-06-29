@@ -4,6 +4,7 @@ import {
   barCountFor,
   clampedRangeFromError,
   DatabentoHistoricalProvider,
+  DemoMarketDataProvider,
   historyRequest,
   parseDatabentoJsonLines,
   sourceSchemaFor,
@@ -137,6 +138,14 @@ describe("Databento market data normalization", () => {
     });
   });
 
+  it("ends the request window at the back-scroll cursor when given", () => {
+    const before = Date.UTC(2026, 5, 20, 12, 0, 0); // 2026-06-20T12:00:00Z (ms)
+    const { start, end } = historyRequest("30m", 260, before);
+    expect(new Date(end).getTime()).toBe(before);
+    // start is a lookback window before the cursor, not before "now"
+    expect(new Date(start).getTime()).toBeLessThan(before);
+  });
+
   it("returns null for unrelated errors or malformed bodies", () => {
     const range = { start: "a", end: "b" };
     expect(
@@ -221,5 +230,39 @@ describe("DatabentoHistoricalProvider availability recovery", () => {
       /Databento history request failed \(422\)/,
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats an empty back-scroll window as a boundary, not an error", async () => {
+    const fetchMock = vi.fn(async () => new Response("", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new DatabentoHistoricalProvider("test-key");
+
+    // With a `before` cursor, an empty response means "no more history".
+    const older = await provider.getHistory("NQ", "30m", 5, Date.now());
+    expect(older.bars).toHaveLength(0);
+    expect(older.provider).toBe("databento");
+
+    // Without a cursor, an empty initial load is still a hard failure.
+    await expect(provider.getHistory("NQ", "30m", 5)).rejects.toThrow(
+      /no bars/,
+    );
+  });
+});
+
+describe("DemoMarketDataProvider back-scroll", () => {
+  it("walks older windows for a cursor and stops at the dataset start", async () => {
+    const provider = new DemoMarketDataProvider();
+    const initial = await provider.getHistory("NQ", "30m", 60);
+    expect(initial.bars.length).toBe(60);
+
+    const oldest = initial.bars[0].time;
+    const older = await provider.getHistory("NQ", "30m", 60, oldest * 1000);
+    expect(older.bars.length).toBeGreaterThan(0);
+    // every older bar precedes the cursor and is contiguous (no overlap)
+    expect(older.bars.every((bar) => bar.time < oldest)).toBe(true);
+
+    // A cursor before the generated window yields nothing → client stops.
+    const exhausted = await provider.getHistory("NQ", "30m", 60, 0);
+    expect(exhausted.bars).toHaveLength(0);
   });
 });
