@@ -283,6 +283,10 @@ export function TradingWorkspace() {
   const olderLoadingRef = useRef(false);
   const requestGenRef = useRef(0);
   const seenContractsRef = useRef<Map<SymbolFamily, string>>(new Map());
+  // True once the user has back-scrolled older bars into the current window, so
+  // the offline 60s refresh (which replaces the whole window) can skip and not
+  // yank them back to the latest.
+  const pagedBackRef = useRef(false);
 
   /* ----- boot choreography (Beat 4: panel-by-panel assembly) -----
      The landing page runs Beats 1-3 (scramble-dissolve, registration
@@ -571,7 +575,12 @@ export function TradingWorkspace() {
         setBars(history.bars);
         seenBarTimesRef.current = new Set(history.bars.map((bar) => bar.time));
         setHasMoreHistory(history.bars.length > 0);
+        pagedBackRef.current = false;
         activeContractRef.current = history.activeContract;
+        // Seed the live-roll baseline so the first gateway mapping that names a
+        // DIFFERENT front contract reconciles (reloads), while a matching one
+        // does not spuriously reload.
+        seenContractsRef.current.set(family, history.activeContract);
         setMarketMeta({
           provider: history.provider,
           session: history.session,
@@ -589,7 +598,9 @@ export function TradingWorkspace() {
         setBars(demoBars);
         seenBarTimesRef.current = new Set(demoBars.map((bar) => bar.time));
         setHasMoreHistory(true);
+        pagedBackRef.current = false;
         activeContractRef.current = `${family}M6`;
+        seenContractsRef.current.set(family, `${family}M6`);
         setMarketMeta({
           ...DEFAULT_MARKET_META,
           continuousSymbol: `${family}.v.0`,
@@ -638,6 +649,7 @@ export function TradingWorkspace() {
         for (const bar of older) {
           seenBarTimesRef.current.add(bar.time);
         }
+        pagedBackRef.current = true;
         setBars((current) =>
           [...older, ...current].sort((a, b) => a.time - b.time),
         );
@@ -716,12 +728,14 @@ export function TradingWorkspace() {
       family: workspace.family,
       timeframe: workspace.timeframe,
     };
-    // New context: discard any in-flight older-history response. `hasMoreHistory`
-    // is re-armed by the loadMarketHistory call that accompanies every
-    // family/timeframe change, so it is not reset here (avoids a redundant
-    // setState inside an effect).
+    // New context: discard any in-flight older-history response and clear the
+    // dedup set (bar times collide across families/timeframes, which would
+    // otherwise false-dedup the new symbol's bars). `hasMoreHistory` is re-armed
+    // by the loadMarketHistory call that accompanies every family/timeframe
+    // change, so it is not reset here (avoids a redundant setState in an effect).
     requestGenRef.current += 1;
     olderLoadingRef.current = false;
+    seenBarTimesRef.current = new Set();
   }, [workspace.family, workspace.timeframe]);
 
   useEffect(() => {
@@ -796,20 +810,21 @@ export function TradingWorkspace() {
             prevContract !== message.activeContract;
           seenContractsRef.current.set(message.family, message.activeContract);
           activeContractRef.current = message.activeContract;
-          setMarketMeta((current) => ({
-            ...current,
-            provider: "databento",
-            delayed: false,
-            sourceSchema: "ohlcv-1m",
-            continuousSymbol: `${message.family}.v.0`,
-            activeContract: message.activeContract,
-          }));
 
           if (message.type === "mapping") {
-            // Only a genuine contract roll re-pulls the back-adjusted window.
-            // The mapping snapshot the gateway replays on every (re)connect
-            // carries the SAME contract — reloading on it would reset
-            // `delayed: true` and bounce the label LIVE -> HISTORICAL forever.
+            // A mapping only updates which contract is active — it does NOT mean
+            // a live tick has arrived, so `delayed` is left untouched (the label
+            // stays HISTORICAL until a real bar lands). Reload the back-adjusted
+            // window only on a genuine contract roll; the snapshot the gateway
+            // replays on every (re)connect carries the same contract and must
+            // not reload (that would bounce the label and reset the view).
+            setMarketMeta((current) => ({
+              ...current,
+              provider: "databento",
+              sourceSchema: "ohlcv-1m",
+              continuousSymbol: `${message.family}.v.0`,
+              activeContract: message.activeContract,
+            }));
             if (isRoll) {
               void loadMarketHistory(
                 selectionRef.current.family,
@@ -831,6 +846,15 @@ export function TradingWorkspace() {
                 seenBars.delete(first);
               }
             }
+            // A real live tick: now the feed is genuinely live (not delayed).
+            setMarketMeta((current) => ({
+              ...current,
+              provider: "databento",
+              delayed: false,
+              sourceSchema: "ohlcv-1m",
+              continuousSymbol: `${message.family}.v.0`,
+              activeContract: message.activeContract,
+            }));
             setBars((current) =>
               applyLiveBar(
                 current,
@@ -899,10 +923,16 @@ export function TradingWorkspace() {
     ) {
       return;
     }
-    // Historical fallback refresh. Each refresh re-pulls the window from
-    // Databento, so keep it gentle (60s) to limit data usage; real-time
-    // updates come from the live gateway when it is connected.
+    // Historical fallback refresh. Each refresh re-pulls (and replaces) the
+    // window from Databento, so keep it gentle (60s) to limit data usage;
+    // real-time updates come from the live gateway when it is connected.
     const interval = window.setInterval(() => {
+      // Don't clobber a back-scroll: replacing the window would discard the
+      // older bars the user paged in (and a concurrent prepend would corrupt
+      // the array). Skip while paged back or while a load is in flight.
+      if (pagedBackRef.current || olderLoadingRef.current) {
+        return;
+      }
       void loadMarketHistory(workspace.family, workspace.timeframe);
     }, 60_000);
     return () => window.clearInterval(interval);
@@ -982,7 +1012,7 @@ export function TradingWorkspace() {
   const streamLive = marketStreamStatus === "live";
   const dataLabel =
     marketMeta.provider === "databento"
-      ? streamLive && !marketMeta.delayed
+      ? streamLive && !marketLoading && !marketMeta.delayed
         ? "DATABENTO LIVE"
         : "DATABENTO HISTORICAL"
       : marketStreamStatus === "unavailable"

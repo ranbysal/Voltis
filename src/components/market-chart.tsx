@@ -394,6 +394,12 @@ export function MarketChart({
       seriesRef.current = null;
       ema20Ref.current = null;
       ema50Ref.current = null;
+      // The chart is being recreated (theme/style swap). Reset the anchor
+      // baseline so the fresh chart re-snaps cleanly instead of shifting the
+      // new (default) visible range against a stale prepend baseline.
+      prevBarsLenRef.current = 0;
+      prevFirstTimeRef.current = null;
+      selKeyRef.current = "";
     };
   }, [theme, chartStyle]);
 
@@ -556,7 +562,10 @@ export function MarketChart({
     };
     ts.subscribeVisibleLogicalRangeChange(handler);
     return () => ts.unsubscribeVisibleLogicalRangeChange(handler);
-  }, [bars, onLoadOlder, canLoadOlder]);
+    // theme/chartStyle are deps because the init effect recreates the chart (and
+    // its timeScale) on those changes; without them the subscription would be
+    // left on the disposed chart and back-scroll would silently stop working.
+  }, [bars, onLoadOlder, canLoadOlder, theme, chartStyle]);
 
   // Trade overlay: Entry / Take Profit / Stop Loss price lines plus a position
   // marker, for the read-only Viewer. A no-op when `trade` is null (the admin
