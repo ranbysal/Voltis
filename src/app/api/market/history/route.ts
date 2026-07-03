@@ -1,7 +1,6 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { TIMEFRAMES } from "@/lib/domain";
-import { requireSession } from "@/lib/auth";
 import { getMarketDataProvider } from "@/lib/market-data";
 
 // A deep Databento history pull can take several seconds; give the serverless
@@ -16,11 +15,9 @@ const requestSchema = z.object({
   count: z.coerce.number().int().positive().max(2000).optional(),
 });
 
+// Market candles are public read-only data (the public /viewer page charts
+// them without signing in); the Databento key itself never leaves the server.
 export async function GET(request: NextRequest) {
-  if (!(await requireSession())) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const input = requestSchema.safeParse({
     family: request.nextUrl.searchParams.get("family") ?? undefined,
     timeframe: request.nextUrl.searchParams.get("timeframe") ?? undefined,

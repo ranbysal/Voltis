@@ -25,6 +25,7 @@ import {
 import {
   FIB_LEVELS,
   fibPrice,
+  type ChartDrawing,
   type FibAnchor,
   type FibDirection,
   type FibDrawing,
@@ -35,6 +36,20 @@ import {
 import { cn } from "@/lib/utils";
 
 export type ChartStyle = "candles" | "line";
+
+/**
+ * The armed chart tool. "crosshair" leaves the chart's native pan/zoom in
+ * charge; every other tool intercepts pointer input: fib and trend draw
+ * two-point overlays, text drops a label, measure rubber-bands a price/bar
+ * readout, zoom selects a time range to jump into.
+ */
+export type ChartTool =
+  | "crosshair"
+  | "trend"
+  | "fib"
+  | "text"
+  | "measure"
+  | "zoom";
 
 // Start loading older bars while this many are still buffered to the left of the
 // viewport, so the (multi-second) fetch resolves before the user reaches the
@@ -79,8 +94,18 @@ type MarketChartProps = {
   isLoadingOlder?: boolean;
   /** True while the boot choreography owns the chart (forces a right-edge view). */
   bootActive?: boolean;
-  /** When true the Fib tool is armed: click two points to drop a manual fib. */
-  drawFib?: boolean;
+  /** The armed tool. Defaults to the plain crosshair. */
+  tool?: ChartTool;
+  /** Snap drawing anchors to the nearest bar's OHLC value. */
+  magnet?: boolean;
+  /** Hide every drawn overlay (fibs, trend lines, text) without deleting. */
+  hideDrawings?: boolean;
+  /** Persisted trend-line / text annotations for the active family. */
+  drawings?: ChartDrawing[];
+  onCreateDrawing?: (
+    drawing: Omit<ChartDrawing, "id" | "updatedAt">,
+  ) => void;
+  onUpdateDrawing?: (id: string, patch: Partial<ChartDrawing>) => void;
   onUpdateFib: (id: string, patch: Partial<FibDrawing>) => void;
   onCreateFib?: (
     start: FibAnchor,
@@ -101,6 +126,14 @@ type FibGeometry = {
   endX: number | null;
   startY: number | null;
   endY: number | null;
+};
+
+type DrawingGeometry = {
+  drawing: ChartDrawing;
+  x1: number | null;
+  y1: number | null;
+  x2: number | null;
+  y2: number | null;
 };
 
 const LIGHT_TF_STYLE: Record<
@@ -147,19 +180,6 @@ export function computeEma(bars: MarketBar[], length: number) {
   return out;
 }
 
-function numericTime(time: Time | null): number | null {
-  if (time === null) {
-    return null;
-  }
-  if (typeof time === "number") {
-    return time;
-  }
-  if (typeof time === "string") {
-    return Math.floor(new Date(time).getTime() / 1000);
-  }
-  return Math.floor(Date.UTC(time.year, time.month - 1, time.day) / 1000);
-}
-
 function buildFibGeometry(
   chart: IChartApi,
   series: ISeriesApi<"Candlestick", Time> | ISeriesApi<"Line", Time>,
@@ -200,6 +220,56 @@ function buildFibGeometry(
     });
 }
 
+/** Binary search: index of the bar whose time is nearest to `time`. */
+function barIndexFor(bars: MarketBar[], time: number): number | null {
+  if (bars.length === 0) {
+    return null;
+  }
+  let lo = 0;
+  let hi = bars.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (bars[mid].time < time) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  if (lo > 0 && Math.abs(bars[lo - 1].time - time) < Math.abs(bars[lo].time - time)) {
+    return lo - 1;
+  }
+  return lo;
+}
+
+/**
+ * Pixel coordinates for trend/text drawings. Times map through the bar's
+ * LOGICAL index (not timeToCoordinate) so a line stays rendered while one of
+ * its endpoints is panned outside the viewport.
+ */
+function buildDrawingGeometry(
+  chart: IChartApi,
+  series: ISeriesApi<"Candlestick", Time> | ISeriesApi<"Line", Time>,
+  bars: MarketBar[],
+  drawings: ChartDrawing[],
+): DrawingGeometry[] {
+  const ts = chart.timeScale();
+  const toX = (time: number) => {
+    const index = barIndexFor(bars, time);
+    return index === null
+      ? null
+      : ts.logicalToCoordinate(index as unknown as Parameters<
+          typeof ts.logicalToCoordinate
+        >[0]);
+  };
+  return drawings.map((drawing) => ({
+    drawing,
+    x1: toX(drawing.start.time),
+    y1: series.priceToCoordinate(drawing.start.price),
+    x2: drawing.end ? toX(drawing.end.time) : null,
+    y2: drawing.end ? series.priceToCoordinate(drawing.end.price) : null,
+  }));
+}
+
 export function MarketChart({
   bars,
   family,
@@ -217,7 +287,12 @@ export function MarketChart({
   canLoadOlder = false,
   isLoadingOlder = false,
   bootActive = false,
-  drawFib = false,
+  tool = "crosshair",
+  magnet = false,
+  hideDrawings = false,
+  drawings = [],
+  onCreateDrawing,
+  onUpdateDrawing,
   onUpdateFib,
   onCreateFib,
 }: MarketChartProps) {
@@ -234,21 +309,48 @@ export function MarketChart({
   const prevFirstTimeRef = useRef<number | null>(null);
   const selKeyRef = useRef(`${family}:${timeframe}:${chartStyle}`);
   const [geometry, setGeometry] = useState<FibGeometry[]>([]);
-  // Manual fib drawing: first click sets `start`, pointer-move tracks `cursor`,
-  // second click finalizes. Points are kept in container-relative pixels.
+  const [drawingGeometry, setDrawingGeometry] = useState<DrawingGeometry[]>([]);
+  // Two-point drafts (fib + trend): first click sets `start`, pointer-move
+  // tracks `cursor`, second click finalizes. Points are container-relative px.
   const [draft, setDraft] = useState<{
     start: DraftPoint;
     cursor: DraftPoint;
   } | null>(null);
-  // Reset a partial draw whenever the Fib tool is toggled on/off. This is
+  const [trendDraft, setTrendDraft] = useState<{
+    start: DraftPoint;
+    cursor: DraftPoint;
+  } | null>(null);
+  // Text tool: a floating input pinned where the user clicked.
+  const [textDraft, setTextDraft] = useState<{
+    x: number;
+    y: number;
+    value: string;
+  } | null>(null);
+  // Measure tool: rubber-band; stays on screen after release until the next
+  // press or a tool change. Logical bar indices are captured at event time so
+  // the render never has to read chart refs.
+  const [measure, setMeasure] = useState<{
+    start: DraftPoint;
+    cursor: DraftPoint;
+    startLogical: number | null;
+    cursorLogical: number | null;
+    done: boolean;
+  } | null>(null);
+  // Zoom tool: horizontal range selection.
+  const [zoomSel, setZoomSel] = useState<{ startX: number; curX: number } | null>(
+    null,
+  );
+  // Reset partial interactions whenever the armed tool changes. This is
   // React's recommended render-time adjustment, which avoids both an effect
-  // and a stale start point leaking into the next drawing session.
-  const [draftArmed, setDraftArmed] = useState(drawFib);
-  if (draftArmed !== drawFib) {
-    setDraftArmed(drawFib);
-    if (draft !== null) {
-      setDraft(null);
-    }
+  // and stale state leaking into the next tool session.
+  const [armedTool, setArmedTool] = useState(tool);
+  if (armedTool !== tool) {
+    setArmedTool(tool);
+    if (draft !== null) setDraft(null);
+    if (trendDraft !== null) setTrendDraft(null);
+    if (textDraft !== null) setTextDraft(null);
+    if (measure !== null) setMeasure(null);
+    if (zoomSel !== null) setZoomSel(null);
   }
 
   const ema20Data = useMemo(
@@ -476,6 +578,7 @@ export function MarketChart({
     // "", which previously matched the initial prevKey and left the last fib
     // stranded on screen after it was toggled off.
     let prevKey: string | null = null;
+    let prevDrawingKey: string | null = null;
     const sync = () => {
       const next = buildFibGeometry(
         chart,
@@ -495,11 +598,20 @@ export function MarketChart({
         prevKey = key;
         setGeometry(next);
       }
+
+      const nextDrawings = buildDrawingGeometry(chart, series, bars, drawings);
+      const drawingKey = nextDrawings
+        .map((g) => `${g.drawing.id}:${g.x1},${g.y1},${g.x2},${g.y2}`)
+        .join("|");
+      if (drawingKey !== prevDrawingKey) {
+        prevDrawingKey = drawingKey;
+        setDrawingGeometry(nextDrawings);
+      }
       raf = requestAnimationFrame(sync);
     };
     raf = requestAnimationFrame(sync);
     return () => cancelAnimationFrame(raf);
-  }, [fibs, timeframe, theme, chartStyle]);
+  }, [fibs, drawings, bars, timeframe, theme, chartStyle]);
 
   // EMA lines draw progressively left -> right after the candles: emaReveal
   // sweeps 0 -> 1 (driven by the boot timeline) and we feed each line series a
@@ -698,14 +810,10 @@ export function MarketChart({
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
     const price = series.coordinateToPrice(y);
-    const time = numericTime(chart.timeScale().coordinateToTime(x));
-    if (price === null || time === null) {
+    const nearest = barAtX(x);
+    if (price === null || !nearest) {
       return;
     }
-
-    const nearest = bars.reduce((best, bar) =>
-      Math.abs(bar.time - time) < Math.abs(best.time - time) ? bar : best,
-    );
 
     onUpdateFib(fib.id, {
       [anchor]: { time: nearest.time, price },
@@ -715,19 +823,23 @@ export function MarketChart({
     });
   }
 
-  // Esc cancels the current draw without leaving a partial drawing behind.
+  // Esc cancels the current interaction without leaving a partial state.
   useEffect(() => {
-    if (!draft) {
+    if (!draft && !trendDraft && !textDraft && !measure && !zoomSel) {
       return;
     }
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setDraft(null);
+        setTrendDraft(null);
+        setTextDraft(null);
+        setMeasure(null);
+        setZoomSel(null);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [draft]);
+  }, [draft, trendDraft, textDraft, measure, zoomSel]);
 
   // Resolve a pointer event to a container-relative point and its price. Refs
   // are read only here, inside event handlers — never during render.
@@ -747,47 +859,238 @@ export function MarketChart({
   }
 
   // Snap a draft point to the nearest bar to produce a persistable anchor.
-  function coordsToAnchor(point: DraftPoint): FibAnchor | null {
+  // With the magnet armed, the price additionally snaps to whichever of that
+  // bar's O/H/L/C values is closest (TradingView's magnet behavior).
+  // Map an x coordinate to the nearest bar via the LOGICAL index —
+  // coordinateToTime returns null over whitespace, while coordinateToLogical
+  // always resolves; clamping pins clicks in the right-offset gutter (or past
+  // the left edge) to the nearest real bar.
+  function barAtX(x: number): MarketBar | null {
     const chart = chartRef.current;
-    if (!chart || bars.length === 0 || !Number.isFinite(point.price)) {
+    if (!chart || bars.length === 0) {
       return null;
     }
-    const time = numericTime(chart.timeScale().coordinateToTime(point.x));
-    if (time === null) {
+    const logical = chart.timeScale().coordinateToLogical(x);
+    if (logical === null) {
       return null;
     }
-    const nearest = bars.reduce((best, bar) =>
-      Math.abs(bar.time - time) < Math.abs(best.time - time) ? bar : best,
+    const index = Math.min(
+      bars.length - 1,
+      Math.max(0, Math.round(Number(logical))),
     );
-    return { time: nearest.time, price: point.price };
+    return bars[index];
   }
 
-  function handleDrawPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+  function coordsToAnchor(point: DraftPoint): FibAnchor | null {
+    if (!Number.isFinite(point.price)) {
+      return null;
+    }
+    const nearest = barAtX(point.x);
+    if (!nearest) {
+      return null;
+    }
+    let price = point.price;
+    if (magnet) {
+      price = [nearest.open, nearest.high, nearest.low, nearest.close].reduce(
+        (best, value) =>
+          Math.abs(value - point.price) < Math.abs(best - point.price)
+            ? value
+            : best,
+      );
+    }
+    return { time: nearest.time, price };
+  }
+
+  /* ------------------------------ tool input ------------------------------ */
+
+  function handleToolPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    // Cancel the browser's default mousedown focus handling: without this the
+    // text tool's freshly-mounted input is blurred (and thus committed empty
+    // and unmounted) the instant the same click's focus disposition lands on
+    // the non-focusable overlay.
+    event.preventDefault();
     const point = draftPointFromEvent(event);
     if (!point) {
       return;
     }
-    if (!draft) {
-      setDraft({ start: point, cursor: point });
+
+    if (tool === "fib") {
+      if (!draft) {
+        setDraft({ start: point, cursor: point });
+        return;
+      }
+      const start = coordsToAnchor(draft.start);
+      const end = coordsToAnchor(point);
+      setDraft(null);
+      if (start && end) {
+        const direction: FibDirection =
+          end.price >= start.price ? "buy" : "sell";
+        onCreateFib?.(start, end, direction);
+      }
       return;
     }
-    const start = coordsToAnchor(draft.start);
-    const end = coordsToAnchor(point);
-    setDraft(null);
-    if (start && end) {
-      const direction: FibDirection =
-        end.price >= start.price ? "buy" : "sell";
-      onCreateFib?.(start, end, direction);
+
+    if (tool === "trend") {
+      if (!trendDraft) {
+        setTrendDraft({ start: point, cursor: point });
+        return;
+      }
+      const start = coordsToAnchor(trendDraft.start);
+      const end = coordsToAnchor(point);
+      setTrendDraft(null);
+      if (start && end && onCreateDrawing) {
+        onCreateDrawing({ family, kind: "trend", start, end, text: null });
+      }
+      return;
+    }
+
+    if (tool === "text") {
+      // One floating input at a time; a second click relocates it.
+      setTextDraft({ x: point.x, y: point.y, value: textDraft?.value ?? "" });
+      return;
+    }
+
+    if (tool === "measure") {
+      event.currentTarget.setPointerCapture(event.pointerId);
+      const logical = chartRef.current
+        ?.timeScale()
+        .coordinateToLogical(point.x);
+      setMeasure({
+        start: point,
+        cursor: point,
+        startLogical: logical === null || logical === undefined ? null : Number(logical),
+        cursorLogical: logical === null || logical === undefined ? null : Number(logical),
+        done: false,
+      });
+      return;
+    }
+
+    if (tool === "zoom") {
+      event.currentTarget.setPointerCapture(event.pointerId);
+      setZoomSel({ startX: point.x, curX: point.x });
     }
   }
 
-  function handleDrawPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
-    if (!draft) {
+  function handleToolPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const point = draftPointFromEvent(event);
+    if (!point) {
       return;
     }
-    const point = draftPointFromEvent(event);
-    if (point) {
+    if (tool === "fib" && draft) {
       setDraft((current) => (current ? { ...current, cursor: point } : current));
+      return;
+    }
+    if (tool === "trend" && trendDraft) {
+      setTrendDraft((current) =>
+        current ? { ...current, cursor: point } : current,
+      );
+      return;
+    }
+    if (tool === "measure" && measure && !measure.done) {
+      const logical = chartRef.current
+        ?.timeScale()
+        .coordinateToLogical(point.x);
+      setMeasure((current) =>
+        current
+          ? {
+              ...current,
+              cursor: point,
+              cursorLogical:
+                logical === null || logical === undefined
+                  ? current.cursorLogical
+                  : Number(logical),
+            }
+          : current,
+      );
+      return;
+    }
+    if (tool === "zoom" && zoomSel) {
+      setZoomSel((current) =>
+        current ? { ...current, curX: point.x } : current,
+      );
+    }
+  }
+
+  function handleToolPointerUp(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    if (tool === "measure" && measure) {
+      // Keep the readout on screen until the next press or a tool change.
+      setMeasure((current) => (current ? { ...current, done: true } : current));
+      return;
+    }
+
+    if (tool === "zoom" && zoomSel) {
+      const chart = chartRef.current;
+      setZoomSel(null);
+      if (!chart) {
+        return;
+      }
+      const ts = chart.timeScale();
+      const range = ts.getVisibleLogicalRange();
+      if (!range) {
+        return;
+      }
+      const from = ts.coordinateToLogical(Math.min(zoomSel.startX, zoomSel.curX));
+      const to = ts.coordinateToLogical(Math.max(zoomSel.startX, zoomSel.curX));
+      if (from === null || to === null) {
+        return;
+      }
+      if (Math.abs(zoomSel.curX - zoomSel.startX) < 8) {
+        // A plain click zooms in 2x around the clicked bar.
+        const center = Number(from);
+        const half = (range.to - range.from) / 4;
+        ts.setVisibleLogicalRange({ from: center - half, to: center + half });
+      } else {
+        ts.setVisibleLogicalRange({ from: Number(from), to: Number(to) });
+      }
+    }
+  }
+
+  function commitTextDraft() {
+    if (!textDraft) {
+      return;
+    }
+    const value = textDraft.value.trim();
+    const anchor = coordsToAnchor({
+      x: textDraft.x,
+      y: textDraft.y,
+      price: seriesRef.current?.coordinateToPrice(textDraft.y) ?? Number.NaN,
+    });
+    setTextDraft(null);
+    if (value && anchor && onCreateDrawing) {
+      onCreateDrawing({ family, kind: "text", start: anchor, end: null, text: value });
+    }
+  }
+
+  function handleDrawingAnchorMove(
+    event: ReactPointerEvent<SVGCircleElement>,
+    drawing: ChartDrawing,
+    anchor: "start" | "end",
+  ) {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
+      return;
+    }
+    const chart = chartRef.current;
+    const series = seriesRef.current;
+    const container = containerRef.current;
+    if (!chart || !series || !container || !onUpdateDrawing) {
+      return;
+    }
+    const rect = container.getBoundingClientRect();
+    const point: DraftPoint = {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+      price: series.coordinateToPrice(event.clientY - rect.top) ?? Number.NaN,
+    };
+    const next = coordsToAnchor(point);
+    if (next) {
+      onUpdateDrawing(drawing.id, {
+        [anchor]: next,
+        updatedAt: new Date().toISOString(),
+      });
     }
   }
 
@@ -801,10 +1104,13 @@ export function MarketChart({
       <div ref={containerRef} className="absolute inset-0" />
 
       <svg
-        className="pointer-events-none absolute inset-0 z-10"
+        className={cn(
+          "pointer-events-none absolute inset-0 z-10",
+          hideDrawings && "hidden",
+        )}
         width="100%"
         height="100%"
-        aria-label="Fibonacci overlays"
+        aria-label="Chart drawings"
         data-fib-count={fibs.length}
         data-geometry-count={geometry.length}
       >
@@ -984,20 +1290,241 @@ export function MarketChart({
               );
             })()
           : null}
+
+        {/* Persisted trend lines + text labels */}
+        {/* eslint-disable-next-line react-hooks/refs -- false positive: refs are
+            only touched inside pointer-event handlers (same pattern as the fib
+            anchors above, which the rule accepts); nothing reads a ref in render. */}
+        {drawingGeometry.map(({ drawing, x1, y1, x2, y2 }) => {
+          const accent = theme === "dark" ? "#5b9bff" : "#2f6fe0";
+          if (drawing.kind === "text") {
+            return x1 !== null && y1 !== null ? (
+              <text
+                key={drawing.id}
+                x={x1}
+                y={y1}
+                fill={accent}
+                style={{ fontFamily: "var(--font-mono)" }}
+                fontSize={11}
+                fontWeight={600}
+                paintOrder="stroke"
+                stroke={theme === "dark" ? "#060b0b" : "#e4e0df"}
+                strokeWidth={4}
+              >
+                {drawing.text}
+              </text>
+            ) : null;
+          }
+          if (x1 === null || y1 === null || x2 === null || y2 === null) {
+            return null;
+          }
+          return (
+            <g key={drawing.id}>
+              <line
+                x1={x1}
+                y1={y1}
+                x2={x2}
+                y2={y2}
+                stroke={accent}
+                strokeWidth={1.6}
+              />
+              {!readOnly && onUpdateDrawing
+                ? (
+                    [
+                      { key: "start" as const, x: x1, y: y1 },
+                      { key: "end" as const, x: x2, y: y2 },
+                    ]
+                  ).map((anchor) => (
+                    <circle
+                      key={anchor.key}
+                      className="pointer-events-auto cursor-grab active:cursor-grabbing"
+                      cx={anchor.x}
+                      cy={anchor.y}
+                      r={5}
+                      fill={theme === "dark" ? "#0b1212" : "#ffffff"}
+                      stroke={accent}
+                      strokeWidth={2}
+                      onPointerDown={(event) => {
+                        event.currentTarget.setPointerCapture(event.pointerId);
+                      }}
+                      onPointerMove={(event) =>
+                        handleDrawingAnchorMove(event, drawing, anchor.key)
+                      }
+                      onPointerUp={(event) => {
+                        event.currentTarget.releasePointerCapture(event.pointerId);
+                      }}
+                    />
+                  ))
+                : null}
+            </g>
+          );
+        })}
+
+        {/* Trend-line draft */}
+        {trendDraft ? (
+          <g>
+            <line
+              x1={trendDraft.start.x}
+              y1={trendDraft.start.y}
+              x2={trendDraft.cursor.x}
+              y2={trendDraft.cursor.y}
+              stroke={theme === "dark" ? "#5b9bff" : "#2f6fe0"}
+              strokeWidth={1.6}
+              strokeDasharray="6 6"
+            />
+            {[trendDraft.start, trendDraft.cursor].map((point, index) => (
+              <circle
+                key={index}
+                cx={point.x}
+                cy={point.y}
+                r={5}
+                fill={theme === "dark" ? "#0b1212" : "#ffffff"}
+                stroke={theme === "dark" ? "#5b9bff" : "#2f6fe0"}
+                strokeWidth={2}
+              />
+            ))}
+          </g>
+        ) : null}
       </svg>
 
-      {!readOnly ? (
-        <div
+      {/* Transient tool overlays (measure readout, zoom selection) — separate
+          from the drawings SVG so they still work while drawings are hidden. */}
+      <svg
+        className="pointer-events-none absolute inset-0 z-10"
+        width="100%"
+        height="100%"
+        aria-hidden="true"
+      >
+        {measure
+          ? (() => {
+              const up = measure.cursor.y <= measure.start.y;
+              const color = up
+                ? theme === "dark"
+                  ? "#00FFEF"
+                  : "#04a35e"
+                : theme === "dark"
+                  ? "#ff5c64"
+                  : "#e5484d";
+              const left = Math.min(measure.start.x, measure.cursor.x);
+              const width = Math.abs(measure.cursor.x - measure.start.x);
+              const top = Math.min(measure.start.y, measure.cursor.y);
+              const height = Math.abs(measure.cursor.y - measure.start.y);
+              const priceDelta =
+                Number.isFinite(measure.start.price) &&
+                Number.isFinite(measure.cursor.price)
+                  ? measure.cursor.price - measure.start.price
+                  : null;
+              const pct =
+                priceDelta !== null && measure.start.price !== 0
+                  ? (priceDelta / measure.start.price) * 100
+                  : null;
+              const barSpan =
+                measure.startLogical !== null && measure.cursorLogical !== null
+                  ? Math.round(
+                      Math.abs(measure.cursorLogical - measure.startLogical),
+                    )
+                  : null;
+              return (
+                <g>
+                  <rect
+                    x={left}
+                    y={top}
+                    width={Math.max(width, 1)}
+                    height={Math.max(height, 1)}
+                    fill={color}
+                    opacity={0.1}
+                    stroke={color}
+                    strokeWidth={1}
+                    strokeDasharray="4 4"
+                  />
+                  {priceDelta !== null ? (
+                    <text
+                      x={left + Math.max(width, 1) / 2}
+                      y={Math.max(12, top - 8)}
+                      textAnchor="middle"
+                      fill={color}
+                      style={{ fontFamily: "var(--font-mono)" }}
+                      fontSize={10}
+                      fontWeight={600}
+                      paintOrder="stroke"
+                      stroke={theme === "dark" ? "#060b0b" : "#e4e0df"}
+                      strokeWidth={4}
+                    >
+                      {`${priceDelta >= 0 ? "+" : ""}${priceDelta.toFixed(2)}  (${
+                        pct !== null ? `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%` : ""
+                      }${barSpan !== null ? ` · ${barSpan} bars` : ""})`}
+                    </text>
+                  ) : null}
+                </g>
+              );
+            })()
+          : null}
+
+        {zoomSel ? (
+          <rect
+            x={Math.min(zoomSel.startX, zoomSel.curX)}
+            y={0}
+            width={Math.max(Math.abs(zoomSel.curX - zoomSel.startX), 1)}
+            height="100%"
+            fill={theme === "dark" ? "#5b9bff" : "#2f6fe0"}
+            opacity={0.12}
+          />
+        ) : null}
+      </svg>
+
+      {(() => {
+        // The crosshair leaves the chart's native pan/zoom in charge. Every
+        // other tool intercepts pointer input; on the read-only viewer only
+        // the non-mutating tools (measure, zoom) are available.
+        const intercepts =
+          tool !== "crosshair" &&
+          (!readOnly || tool === "measure" || tool === "zoom");
+        if (!intercepts) {
+          return null;
+        }
+        return (
+          <div
+            className={cn(
+              "absolute inset-0 z-30",
+              tool === "zoom" ? "cursor-zoom-in" : "cursor-crosshair",
+            )}
+            onPointerDown={handleToolPointerDown}
+            onPointerMove={handleToolPointerMove}
+            onPointerUp={handleToolPointerUp}
+          />
+        );
+      })()}
+
+      {textDraft && !readOnly ? (
+        <input
+          autoFocus
+          value={textDraft.value}
+          placeholder="Type · Enter to place"
+          onChange={(event) =>
+            setTextDraft((current) =>
+              current ? { ...current, value: event.target.value } : current,
+            )
+          }
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              commitTextDraft();
+            } else if (event.key === "Escape") {
+              setTextDraft(null);
+            }
+          }}
+          onBlur={commitTextDraft}
           className={cn(
-            "absolute inset-0 z-30",
-            drawFib ? "cursor-crosshair" : "pointer-events-none",
+            "absolute z-40 w-44 rounded-md border px-2 py-1 font-mono text-[10px] shadow-sm outline-none backdrop-blur",
+            theme === "dark"
+              ? "border-[#15201f] bg-[#0b1212]/95 text-[#d9e6e3]"
+              : "border-[#e6e5e1] bg-[#ffffff]/95 text-[#1f2226]",
           )}
-          onPointerDown={drawFib ? handleDrawPointerDown : undefined}
-          onPointerMove={drawFib ? handleDrawPointerMove : undefined}
+          style={{ left: textDraft.x, top: textDraft.y }}
         />
       ) : null}
 
-      {drawFib && !readOnly ? (
+      {tool !== "crosshair" &&
+      (!readOnly || tool === "measure" || tool === "zoom") ? (
         <div
           className={cn(
             "pointer-events-none absolute left-1/2 top-3 z-30 -translate-x-1/2 whitespace-nowrap rounded-md border px-2.5 py-1.5 font-mono text-[9px] shadow-sm backdrop-blur",
@@ -1006,9 +1533,19 @@ export function MarketChart({
               : "border-[#e6e5e1] bg-[#e4e0df]/92 text-[#6d7277]",
           )}
         >
-          {draft
-            ? "Click to place the second point · Esc to cancel"
-            : "Click two points to draw a Fib · drag up = buy, down = sell"}
+          {tool === "fib"
+            ? draft
+              ? "Click to place the second point · Esc to cancel"
+              : "Click two points to draw a Fib · drag up = buy, down = sell"
+            : tool === "trend"
+              ? trendDraft
+                ? "Click to place the second point · Esc to cancel"
+                : "Click two points to draw a trend line"
+              : tool === "text"
+                ? "Click to place a label · Enter commits · Esc cancels"
+                : tool === "measure"
+                  ? "Drag to measure price and bars · Esc clears"
+                  : "Drag a region to zoom in · click zooms 2x"}
         </div>
       ) : null}
 

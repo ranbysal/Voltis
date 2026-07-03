@@ -5,20 +5,17 @@ import { CustomEase } from "gsap/CustomEase";
 import {
   ArrowLeft,
   Bell,
-  Brush,
   Crosshair,
   Eye,
+  EyeOff,
   Layers3,
   LogOut,
   Magnet,
   Maximize2,
   Minimize2,
   Moon,
-  MoveDiagonal,
   Ruler,
   Settings,
-  Smile,
-  Spline,
   Sun,
   Trash2,
   TrendingUp,
@@ -39,6 +36,7 @@ import {
   FAMILY_LABELS,
   TIMEFRAMES,
   executionTicker,
+  type ChartDrawing,
   type FibAnchor,
   type FibDirection,
   type FibDrawing,
@@ -72,7 +70,12 @@ import {
 import { BootProvider, useBoot, useBootPhase } from "@/components/transition/boot-context";
 import { BootFrame } from "@/components/transition/boot-frame";
 import { useCountUp } from "@/components/transition/use-count-up";
-import { computeEma, MarketChart, type ChartStyle } from "@/components/market-chart";
+import {
+  computeEma,
+  MarketChart,
+  type ChartStyle,
+  type ChartTool,
+} from "@/components/market-chart";
 import { FibLayersPanel } from "@/components/workspace/fib-layers";
 import {
   AnalyticsPopup,
@@ -162,21 +165,23 @@ const FAMILY_DETAILS: Record<
   GC: { name: "Gold Futures", exchange: "COMEX" },
 };
 
-const CHART_TOOLS = [
-  { icon: Crosshair, label: "Crosshair" },
-  { icon: TrendingUp, label: "Trend line" },
-  { icon: Layers3, label: "Fib retracement" },
-  { icon: Spline, label: "Pattern" },
-  { icon: MoveDiagonal, label: "Parallel channel" },
-  { icon: Brush, label: "Brush" },
-  { icon: Type, label: "Text" },
-  { icon: Smile, label: "Emoji" },
-  { icon: Ruler, label: "Measure" },
-  { icon: ZoomIn, label: "Zoom" },
-  { icon: Magnet, label: "Magnet" },
-  { icon: Eye, label: "Hide drawings" },
-  { icon: Trash2, label: "Remove drawings" },
-] as const;
+// Every rail entry does something: the "tool" entries arm a chart tool, the
+// "toggle" entries flip a mode, and "clear" removes this family's drawings.
+const CHART_TOOLS: (
+  | { kind: "tool"; id: ChartTool; icon: typeof Crosshair; label: string }
+  | { kind: "toggle"; id: "magnet" | "drawings"; icon: typeof Crosshair; label: string }
+  | { kind: "action"; id: "clear"; icon: typeof Crosshair; label: string }
+)[] = [
+  { kind: "tool", id: "crosshair", icon: Crosshair, label: "Crosshair" },
+  { kind: "tool", id: "trend", icon: TrendingUp, label: "Trend line" },
+  { kind: "tool", id: "fib", icon: Layers3, label: "Fib retracement" },
+  { kind: "tool", id: "text", icon: Type, label: "Text" },
+  { kind: "tool", id: "measure", icon: Ruler, label: "Measure" },
+  { kind: "tool", id: "zoom", icon: ZoomIn, label: "Zoom" },
+  { kind: "toggle", id: "magnet", icon: Magnet, label: "Magnet — snap to OHLC" },
+  { kind: "toggle", id: "drawings", icon: Eye, label: "Hide drawings" },
+  { kind: "action", id: "clear", icon: Trash2, label: "Remove drawings" },
+];
 
 const SPARK_UP = [4, 6, 5, 9, 8, 12, 10, 14, 13, 17, 15, 19, 22];
 const SPARK_UP_2 = [3, 5, 8, 6, 10, 9, 13, 11, 15, 18, 16, 21, 24];
@@ -256,7 +261,9 @@ export function TradingWorkspace() {
   const [chartStyle, setChartStyle] = useState<ChartStyle>("candles");
   const [showEma20, setShowEma20] = useState(true);
   const [showEma50, setShowEma50] = useState(true);
-  const [activeTool, setActiveTool] = useState(0);
+  const [chartTool, setChartTool] = useState<ChartTool>("crosshair");
+  const [magnetOn, setMagnetOn] = useState(false);
+  const [drawingsHidden, setDrawingsHidden] = useState(false);
   const [showFibPanel, setShowFibPanel] = useState(true);
   const [showTradePanel, setShowTradePanel] = useState(true);
   const [boot, setBoot] = useState<{ active: boolean; phase: BootPhase }>({
@@ -291,6 +298,8 @@ export function TradingWorkspace() {
   // Request generation that has already had its one proactive prefetch, so we
   // build the initial buffer exactly once per family/timeframe (no chaining).
   const prefetchedGenRef = useRef(-1);
+  // Families whose auto fibs have been re-anchored on real Databento history.
+  const reconciledFamiliesRef = useRef<Set<SymbolFamily>>(new Set());
 
   /* ----- boot choreography (Beat 4: panel-by-panel assembly) -----
      The landing page runs Beats 1-3 (scramble-dissolve, registration
@@ -707,7 +716,9 @@ export function TradingWorkspace() {
 
     void loadCloudWorkspace().then((cloudState) => {
       if (cloudState) {
-        setWorkspace(cloudState);
+        // Merge over the defaults so states saved before newer fields (e.g.
+        // `drawings`) existed hydrate cleanly.
+        setWorkspace({ ...DEFAULT_WORKSPACE, ...cloudState });
         void loadMarketHistory(cloudState.family, cloudState.timeframe);
       }
     });
@@ -1016,6 +1027,88 @@ export function TradingWorkspace() {
     });
   }, [bars, hydrated]);
 
+  // One-shot per family: once real Databento data is available, re-anchor every
+  // auto (non-locked, non-manual) fib for that family from its OWN timeframe's
+  // real history. First-visit fibs are seeded from the demo generator whose
+  // price level is entirely different, so without this pass their lines would
+  // sit nowhere near the real candles.
+  useEffect(() => {
+    if (!hydrated || marketMeta.provider !== "databento") {
+      return;
+    }
+    const family = workspace.family;
+    if (reconciledFamiliesRef.current.has(family)) {
+      return;
+    }
+    reconciledFamiliesRef.current.add(family);
+
+    const staleTimeframes = [
+      ...new Set(
+        workspace.fibs
+          .filter(
+            (fib) => fib.family === family && !fib.locked && !fib.manual,
+          )
+          .map((fib) => fib.timeframe),
+      ),
+    ];
+    if (staleTimeframes.length === 0) {
+      return;
+    }
+
+    void Promise.all(
+      staleTimeframes.map(async (timeframe) => {
+        try {
+          const response = await fetch(
+            `/api/market/history?family=${family}&timeframe=${timeframe}`,
+            { cache: "no-store" },
+          );
+          if (!response.ok) {
+            return null;
+          }
+          const history = (await response.json()) as {
+            provider: string;
+            bars: MarketBar[];
+          };
+          return history.provider === "databento" && history.bars.length > 0
+            ? { timeframe, bars: history.bars }
+            : null;
+        } catch {
+          return null;
+        }
+      }),
+    ).then((results) => {
+      const barsByTimeframe = new Map(
+        results
+          .filter((result): result is NonNullable<typeof result> =>
+            Boolean(result),
+          )
+          .map((result) => [result.timeframe, result.bars]),
+      );
+      if (barsByTimeframe.size === 0) {
+        return;
+      }
+      setWorkspace((current) => {
+        let changed = false;
+        const fibs = current.fibs.map((fib) => {
+          if (fib.family !== family || fib.locked || fib.manual) {
+            return fib;
+          }
+          const source = barsByTimeframe.get(fib.timeframe);
+          if (!source) {
+            return fib;
+          }
+          const anchors = detectFibAnchors(source, fib.direction);
+          if (!anchors) {
+            return fib;
+          }
+          changed = true;
+          return { ...fib, ...anchors, updatedAt: new Date().toISOString() };
+        });
+        return changed ? { ...current, fibs } : current;
+      });
+    });
+  }, [hydrated, marketMeta.provider, workspace.family, workspace.fibs]);
+
   /* ----- derived ----- */
   const visibleFibs = useMemo(
     () =>
@@ -1074,11 +1167,29 @@ export function TradingWorkspace() {
     }));
   }
 
-  function addFib(timeframe: Timeframe, direction: FibDirection) {
-    const source =
-      timeframe === workspace.timeframe
-        ? bars
-        : generateMarketBars(workspace.family, timeframe);
+  async function addFib(timeframe: Timeframe, direction: FibDirection) {
+    // Anchor on REAL bars for the fib's own timeframe. The active timeframe
+    // reuses the loaded chart data; any other timeframe fetches its real
+    // history first (the demo generator is only the last-ditch fallback, so a
+    // "5m buy fib" detects its swing from actual 5-minute candles).
+    let source: MarketBar[] | null =
+      timeframe === workspace.timeframe ? bars : null;
+    if (!source) {
+      try {
+        const response = await fetch(
+          `/api/market/history?family=${workspace.family}&timeframe=${timeframe}`,
+          { cache: "no-store" },
+        );
+        if (response.ok) {
+          source = ((await response.json()) as { bars: MarketBar[] }).bars;
+        }
+      } catch {
+        // fall through to the deterministic fallback below
+      }
+    }
+    if (!source || source.length === 0) {
+      source = generateMarketBars(workspace.family, timeframe);
+    }
     const anchors = detectFibAnchors(source, direction);
     if (!anchors) {
       return;
@@ -1152,7 +1263,37 @@ export function TradingWorkspace() {
       };
     });
     // Return to the crosshair so the chart can be panned again.
-    setActiveTool(0);
+    setChartTool("crosshair");
+  }
+
+  /* ----- trend line / text annotations ----- */
+  function createDrawing(drawing: Omit<ChartDrawing, "id" | "updatedAt">) {
+    setWorkspace((current) => ({
+      ...current,
+      drawings: [
+        ...(current.drawings ?? []),
+        { ...drawing, id: nanoid(), updatedAt: new Date().toISOString() },
+      ].slice(-120),
+    }));
+    setChartTool("crosshair");
+  }
+
+  function updateDrawing(id: string, patch: Partial<ChartDrawing>) {
+    setWorkspace((current) => ({
+      ...current,
+      drawings: (current.drawings ?? []).map((drawing) =>
+        drawing.id === id ? { ...drawing, ...patch } : drawing,
+      ),
+    }));
+  }
+
+  function clearDrawings() {
+    setWorkspace((current) => ({
+      ...current,
+      drawings: (current.drawings ?? []).filter(
+        (drawing) => drawing.family !== current.family,
+      ),
+    }));
   }
 
   async function refreshFib(fib: FibDrawing) {
@@ -1240,8 +1381,16 @@ export function TradingWorkspace() {
 
   const symbolLabel = `${workspace.family}1!`;
   const detail = FAMILY_DETAILS[workspace.family];
-  const fibToolActive =
-    CHART_TOOLS[activeTool]?.label === "Fib retracement" && !activePanel;
+  // While a popup panel is open the chart falls back to the crosshair so the
+  // panel owns the pointer.
+  const effectiveTool: ChartTool = activePanel ? "crosshair" : chartTool;
+  const visibleDrawings = useMemo(
+    () =>
+      (workspace.drawings ?? []).filter(
+        (drawing) => drawing.family === workspace.family,
+      ),
+    [workspace.drawings, workspace.family],
+  );
 
   return (
     <BootProvider value={boot}>
@@ -1588,22 +1737,50 @@ export function TradingWorkspace() {
               data-boot-content
               className="flex w-11 shrink-0 flex-col items-center gap-0.5 overflow-y-auto border-r border-line py-2"
             >
-              {CHART_TOOLS.map((tool, index) => (
-                <button
-                  key={tool.label}
-                  onClick={() => setActiveTool(index)}
-                  aria-label={tool.label}
-                  title={tool.label}
-                  className={cn(
-                    "v-press grid h-8 w-8 shrink-0 place-items-center rounded-lg",
-                    activeTool === index
-                      ? "bg-card-soft text-[#4b8ee8]"
-                      : "text-ink-2 hover:bg-card-soft hover:text-ink",
-                  )}
-                >
-                  <tool.icon size={15} />
-                </button>
-              ))}
+              {CHART_TOOLS.map((tool) => {
+                const active =
+                  tool.kind === "tool"
+                    ? chartTool === tool.id
+                    : tool.id === "magnet"
+                      ? magnetOn
+                      : tool.id === "drawings"
+                        ? drawingsHidden
+                        : false;
+                const label =
+                  tool.id === "drawings"
+                    ? drawingsHidden
+                      ? "Show drawings"
+                      : "Hide drawings"
+                    : tool.label;
+                const Icon =
+                  tool.id === "drawings" && drawingsHidden ? EyeOff : tool.icon;
+                return (
+                  <button
+                    key={tool.id}
+                    onClick={() => {
+                      if (tool.kind === "tool") {
+                        setChartTool(tool.id);
+                      } else if (tool.id === "magnet") {
+                        setMagnetOn((value) => !value);
+                      } else if (tool.id === "drawings") {
+                        setDrawingsHidden((value) => !value);
+                      } else {
+                        clearDrawings();
+                      }
+                    }}
+                    aria-label={label}
+                    title={label}
+                    className={cn(
+                      "v-press grid h-8 w-8 shrink-0 place-items-center rounded-lg",
+                      active
+                        ? "bg-card-soft text-[#4b8ee8]"
+                        : "text-ink-2 hover:bg-card-soft hover:text-ink",
+                    )}
+                  >
+                    <Icon size={15} />
+                  </button>
+                );
+              })}
             </aside>
 
             {/* chart + legend */}
@@ -1697,7 +1874,12 @@ export function TradingWorkspace() {
                 showEma20={showEma20}
                 showEma50={showEma50}
                 emaReveal={emaReveal}
-                drawFib={fibToolActive}
+                tool={effectiveTool}
+                magnet={magnetOn}
+                hideDrawings={drawingsHidden}
+                drawings={visibleDrawings}
+                onCreateDrawing={createDrawing}
+                onUpdateDrawing={updateDrawing}
                 onLoadOlder={(oldestTime) => void loadOlderHistory(oldestTime)}
                 canLoadOlder={hasMoreHistory && !marketLoading}
                 isLoadingOlder={loadingOlder}

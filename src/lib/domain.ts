@@ -49,11 +49,25 @@ export type FibDrawing = {
   updatedAt: string;
 };
 
+/** A hand-drawn chart annotation: a trend line or a text label. */
+export type ChartDrawing = {
+  id: string;
+  family: SymbolFamily;
+  kind: "trend" | "text";
+  start: FibAnchor;
+  /** Second anchor — trend lines only. */
+  end: FibAnchor | null;
+  /** Label content — text annotations only. */
+  text: string | null;
+  updatedAt: string;
+};
+
 export type WorkspaceState = {
   family: SymbolFamily;
   executionSize: ExecutionSize;
   timeframe: Timeframe;
   fibs: FibDrawing[];
+  drawings: ChartDrawing[];
   quantity: number;
   stopLoss: number;
   takeProfit: number;
@@ -80,6 +94,7 @@ export const DEFAULT_WORKSPACE: WorkspaceState = {
   executionSize: "mini",
   timeframe: "30m",
   fibs: [],
+  drawings: [],
   quantity: 2,
   stopLoss: 40,
   takeProfit: 80,

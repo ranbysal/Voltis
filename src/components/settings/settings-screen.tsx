@@ -23,6 +23,7 @@ import {
   activeCount,
   appendActivity,
   defaultConnections,
+  fetchServerConnections,
   FIRM_IDS,
   FIRM_NAMES,
   latestSync,
@@ -30,6 +31,8 @@ import {
   loadConnections,
   PROP_FIRMS,
   requestConnect,
+  requestDisconnect,
+  requestSync,
   saveActivity,
   saveConnections,
   type ActivityEntry,
@@ -86,7 +89,7 @@ export function SettingsScreen({
     document.documentElement.style.colorScheme = theme;
   }, [theme]);
 
-  /* ----- connections + activity hydrate / seed ----- */
+  /* ----- connections + activity hydrate ----- */
   useEffect(() => {
     const nowIso = new Date().toISOString();
     const loaded = loadConnections();
@@ -106,14 +109,6 @@ export function SettingsScreen({
     }
 
     let log = loadActivity();
-    if (log.length === 0) {
-      log = appendActivity(log, {
-        kind: "connect",
-        firm: "takeprofittrader",
-        label: "Linked TakeProfitTrader via Tradovate",
-        at: nowIso,
-      });
-    }
     const top = log[0];
     const sameDaySignIn =
       top &&
@@ -133,6 +128,14 @@ export function SettingsScreen({
       setConnections(loaded);
       setActivity(log);
       setHydrated(true);
+    });
+
+    // Server state is authoritative: a connection made on any device stays
+    // connected here until it is explicitly disconnected.
+    void fetchServerConnections().then((server) => {
+      if (server) {
+        setConnections(server.state);
+      }
     });
   }, []);
 
@@ -186,6 +189,8 @@ export function SettingsScreen({
 
   const handleDisconnect = useCallback(
     (firm: FirmId) => {
+      // Optimistic UI; the server delete is what actually severs the stored
+      // link (idempotent, so a retry after a network blip is safe).
       setConnections((current) => ({
         ...current,
         [firm]: {
@@ -196,10 +201,14 @@ export function SettingsScreen({
           lastSync: null,
         },
       }));
-      logActivity({
-        kind: "disconnect",
-        firm,
-        label: `Disconnected ${FIRM_NAMES[firm]}`,
+      void requestDisconnect(firm).then((ok) => {
+        logActivity({
+          kind: "disconnect",
+          firm,
+          label: ok
+            ? `Disconnected ${FIRM_NAMES[firm]}`
+            : `Disconnected ${FIRM_NAMES[firm]} locally — server unreachable, retry if it reappears`,
+        });
       });
     },
     [logActivity],
@@ -207,15 +216,26 @@ export function SettingsScreen({
 
   const handleSync = useCallback(
     (firm: FirmId) => {
-      const nowIso = new Date().toISOString();
-      setConnections((current) => ({
-        ...current,
-        [firm]: { ...current[firm], lastSync: nowIso },
-      }));
-      logActivity({
-        kind: "sync",
-        firm,
-        label: `Synced ${FIRM_NAMES[firm]}`,
+      // A real sync: the server re-validates the stored Tradovate credentials
+      // and stamps the connection's last-sync time.
+      void requestSync(firm).then((result) => {
+        if (result.ok) {
+          setConnections((current) => ({
+            ...current,
+            [firm]: { ...current[firm], lastSync: result.lastSync },
+          }));
+          logActivity({
+            kind: "sync",
+            firm,
+            label: `Synced ${FIRM_NAMES[firm]}`,
+          });
+        } else {
+          logActivity({
+            kind: "sync",
+            firm,
+            label: `Sync failed for ${FIRM_NAMES[firm]}: ${result.error}`,
+          });
+        }
       });
     },
     [logActivity],

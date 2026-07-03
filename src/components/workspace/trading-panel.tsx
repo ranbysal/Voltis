@@ -9,12 +9,13 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   FAMILY_LABELS,
   type ExecutionSize,
   type SymbolFamily,
 } from "@/lib/domain";
+import { currentFuturesSession } from "@/lib/session-clock";
 import { cn } from "@/lib/utils";
 import { Dropdown, MenuItem, Switch } from "@/components/workspace/ui";
 
@@ -162,6 +163,16 @@ export function TradingPanel({
   const [accounts, setAccounts] = useState<string[]>([...ACCOUNTS]);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  // Live session clock: Asia / London / New York and open/closed, refreshed
+  // every 30s so the footer tracks session handoffs and the daily halt.
+  const [session, setSession] = useState(() => currentFuturesSession());
+  useEffect(() => {
+    const interval = window.setInterval(
+      () => setSession(currentFuturesSession()),
+      30_000,
+    );
+    return () => window.clearInterval(interval);
+  }, []);
 
   // Re-seed prices whenever the instrument context changes.
   const seedKey = `${family}:${size}`;
@@ -655,12 +666,20 @@ export function TradingPanel({
       </div>
 
       <div data-boot-content className="flex items-center gap-2 border-t border-line px-4 py-3 text-[9px]">
-        <span data-boot-dot className="h-1.5 w-1.5 rounded-full bg-up" />
+        <span
+          data-boot-dot
+          className={cn(
+            "h-1.5 w-1.5 rounded-full",
+            session.open ? "bg-up" : "bg-down",
+          )}
+        />
         <span className="font-medium text-ink">Market</span>
         <span className="text-ink-3">|</span>
-        <span className="text-ink-2">NY</span>
+        <span className="text-ink-2">{session.name}</span>
         <span className="text-ink-3">|</span>
-        <span className="font-medium text-up">Open</span>
+        <span className={cn("font-medium", session.open ? "text-up" : "text-down")}>
+          {session.open ? "Open" : "Closed"}
+        </span>
       </div>
     </aside>
   );

@@ -58,22 +58,15 @@ function blankConnection(): ConnectionRecord {
 }
 
 /**
- * Initial state. TakeProfitTrader ships pre-linked (1 / 4 active) so the
- * settings page reflects the reference on first visit; the rest are Yazan's to
- * connect. Timestamps stay null here (deterministic — safe for SSR) and are
- * seeded with a real client-side time on first mount.
+ * Initial state: nothing is linked until a REAL Tradovate login is validated —
+ * connections only ever come from a successful server-side connect (and, when
+ * the database is configured, they persist there until disconnected).
  */
 export function defaultConnections(): ConnectionState {
   return {
     topstep: blankConnection(),
     alphafutures: blankConnection(),
-    takeprofittrader: {
-      status: "connected",
-      username: "",
-      environment: "live",
-      connectedAt: null,
-      lastSync: null,
-    },
+    takeprofittrader: blankConnection(),
     lucid: blankConnection(),
   };
 }
@@ -202,6 +195,82 @@ export async function requestConnect(payload: {
     };
     if (!response.ok) {
       return { ok: false, error: body.error ?? "Unable to connect account" };
+    }
+    return { ok: true, lastSync: body.lastSync ?? new Date().toISOString() };
+  } catch {
+    return { ok: false, error: "Network error — please try again" };
+  }
+}
+
+/** Server-persisted connections (empty when the database isn't configured). */
+export async function fetchServerConnections(): Promise<{
+  persisted: boolean;
+  state: ConnectionState;
+} | null> {
+  try {
+    const response = await fetch("/api/connections", { cache: "no-store" });
+    if (!response.ok) {
+      return null;
+    }
+    const body = (await response.json()) as {
+      persistence?: string;
+      connections?: {
+        firm: FirmId;
+        username: string;
+        environment: Environment;
+        connectedAt: string;
+        lastSync: string;
+      }[];
+    };
+    if (body.persistence !== "neon") {
+      return null;
+    }
+    const state = defaultConnections();
+    for (const row of body.connections ?? []) {
+      if (state[row.firm]) {
+        state[row.firm] = {
+          status: "connected",
+          username: row.username,
+          environment: row.environment,
+          connectedAt: row.connectedAt,
+          lastSync: row.lastSync,
+        };
+      }
+    }
+    return { persisted: true, state };
+  } catch {
+    return null;
+  }
+}
+
+export async function requestDisconnect(firm: FirmId): Promise<boolean> {
+  try {
+    const response = await fetch("/api/connections", {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ firm }),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function requestSync(
+  firm: FirmId,
+): Promise<{ ok: true; lastSync: string } | { ok: false; error: string }> {
+  try {
+    const response = await fetch("/api/connections", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ firm }),
+    });
+    const body = (await response.json().catch(() => ({}))) as {
+      lastSync?: string;
+      error?: string;
+    };
+    if (!response.ok) {
+      return { ok: false, error: body.error ?? "Sync failed" };
     }
     return { ok: true, lastSync: body.lastSync ?? new Date().toISOString() };
   } catch {

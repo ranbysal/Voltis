@@ -23,11 +23,22 @@ const fibSchema = z.object({
   updatedAt: z.iso.datetime(),
 });
 
+const drawingSchema = z.object({
+  id: z.string().min(1),
+  family: z.enum(["YM", "NQ", "GC"]),
+  kind: z.enum(["trend", "text"]),
+  start: anchorSchema,
+  end: anchorSchema.nullable(),
+  text: z.string().max(120).nullable(),
+  updatedAt: z.iso.datetime(),
+});
+
 const workspaceSchema = z.object({
   family: z.enum(["YM", "NQ", "GC"]),
   executionSize: z.enum(["mini", "micro"]),
   timeframe: z.enum(TIMEFRAMES),
   fibs: z.array(fibSchema).max(36),
+  drawings: z.array(drawingSchema).max(120).default([]),
   quantity: z.number().int().positive().max(100),
   stopLoss: z.number().nonnegative().max(10_000),
   takeProfit: z.number().nonnegative().max(10_000),

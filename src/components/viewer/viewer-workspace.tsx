@@ -2,80 +2,86 @@
 
 import {
   Bell,
-  Brush,
   Crosshair,
   Eye,
-  Layers3,
+  EyeOff,
   LogIn,
-  Magnet,
   Moon,
-  MoveDiagonal,
   Ruler,
-  Spline,
   Sun,
-  Trash2,
-  TrendingUp,
-  Type,
   ZoomIn,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { computeEma, MarketChart, type ChartTrade } from "@/components/market-chart";
 import { BootProvider } from "@/components/transition/boot-context";
 import { TickerStrip, type TickerQuote } from "@/components/workspace/ticker-strip";
 import { Dropdown, MenuItem } from "@/components/workspace/ui";
+import type { FibDrawing, MarketBar } from "@/lib/domain";
+import { applyLiveBar, timeframeBucketStart } from "@/lib/market-aggregation";
 import { generateMarketBars } from "@/lib/market";
+import { barCountFor } from "@/lib/market-data";
 import { cn } from "@/lib/utils";
 
-/**
- * The trade Yazan (the admin) currently has open, shown read-only to viewers.
- * Entry / TP / SL / side / quantity are fixed facts of the position; the
- * current price and P&L are derived from the (deterministic demo) feed so the
- * numbers always reconcile.
- */
-const TRADE = {
-  symbol: "NQ1!",
-  exchange: "CME",
-  name: "E-mini Nasdaq-100",
-  side: "long" as const,
-  quantity: 4,
-  entry: 29_332.5,
-  takeProfit: 29_670,
-  stopLoss: 28_975,
-  multiplier: 20, // NQ is $20 per index point
-  leverage: 20,
-  openedLabel: "May 26, 2025 · 16:12:34",
+/** Open trade as served by /api/public/state. */
+type PublicTrade = {
+  id: string;
+  family: "NQ" | "YM" | "GC";
+  symbol: string;
+  side: "long" | "short";
+  quantity: number;
+  entryPrice: number;
+  takeProfit: number | null;
+  stopLoss: number | null;
+  mode: "paper" | "demo" | "live";
+  openedAt: string;
+};
+
+type PublicState = {
+  available: boolean;
+  trades: PublicTrade[];
+  fibs: FibDrawing[];
+};
+
+const FAMILY = "NQ" as const;
+const TIMEFRAME = "30m" as const;
+const EXCHANGE = "CME";
+
+/** $ per index point per contract, by display symbol root. */
+const POINT_VALUE: Record<string, number> = {
+  "NQ1!": 20,
+  "MNQ1!": 2,
+  "YM1!": 5,
+  "MYM1!": 0.5,
+  "GC1!": 100,
+  "MGC1!": 10,
 };
 
 const TICKER_QUOTES: TickerQuote[] = [
-  { symbol: "NQ1!", price: 29_223, change: 11.2, decimals: 2, drift: 1.25 },
-  { symbol: "YM1!", price: 30_657.4, change: 60.4, decimals: 2, drift: 4 },
+  { symbol: "NQ1!", price: 22_021, change: 11.2, decimals: 2, drift: 1.25 },
+  { symbol: "YM1!", price: 38_643, change: 60.4, decimals: 2, drift: 4 },
   { symbol: "ES1!", price: 5_236.09, change: 9.59, decimals: 2, drift: 0.5 },
   { symbol: "GC1!", note: "(Gold)", price: 2_329.21, change: 10.11, decimals: 2, drift: 0.45 },
   { symbol: "SI1!", note: "(Silver)", price: 27.34, change: 0.26, decimals: 2, drift: 0.02 },
   { symbol: "CL1!", note: "(Oil)", price: 78.59, change: -0.16, decimals: 2, drift: 0.05 },
 ];
 
-const CHART_TOOLS = [
-  { icon: Crosshair, label: "Crosshair" },
-  { icon: TrendingUp, label: "Trend line" },
-  { icon: Layers3, label: "Fib retracement" },
-  { icon: Spline, label: "Pattern" },
-  { icon: MoveDiagonal, label: "Parallel channel" },
-  { icon: Brush, label: "Brush" },
-  { icon: Type, label: "Text" },
-  { icon: Ruler, label: "Measure" },
-  { icon: ZoomIn, label: "Zoom" },
-  { icon: Magnet, label: "Magnet" },
-  { icon: Eye, label: "Hide drawings" },
-  { icon: Trash2, label: "Remove drawings" },
-] as const;
+type ViewerTool = "crosshair" | "measure" | "zoom";
 
 function money(value: number, decimals = 2) {
   return value.toLocaleString("en-US", {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   });
+}
+
+function openedLabel(iso: string) {
+  const date = new Date(iso);
+  return `${date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })} · ${date.toLocaleTimeString("en-US", { hour12: false })}`;
 }
 
 function ViewerAvatar() {
@@ -90,9 +96,24 @@ function ViewerAvatar() {
   );
 }
 
+type StreamStatus = "unavailable" | "connecting" | "live" | "reconnecting";
+
 export function ViewerWorkspace() {
   const [theme, setTheme] = useState<"light" | "dark">("light");
-  const [activeTool, setActiveTool] = useState(0);
+  const [activeTool, setActiveTool] = useState<ViewerTool>("crosshair");
+  const [showDrawings, setShowDrawings] = useState(true);
+  const [bars, setBars] = useState<MarketBar[]>([]);
+  const [provider, setProvider] = useState<"demo" | "databento">("demo");
+  const [delayed, setDelayed] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [streamStatus, setStreamStatus] = useState<StreamStatus>("connecting");
+  const [hasMoreHistory, setHasMoreHistory] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [publicState, setPublicState] = useState<PublicState | null>(null);
+
+  const seenBarTimesRef = useRef<Set<number>>(new Set());
+  const olderLoadingRef = useRef(false);
+  const pagedBackRef = useRef(false);
 
   useEffect(() => {
     if (window.localStorage.getItem("voltis-theme") === "dark") {
@@ -105,82 +126,314 @@ export function ViewerWorkspace() {
     document.documentElement.style.colorScheme = theme;
   }, [theme]);
 
-  // Deterministic demo bars (seeded), shifted so the position sits "live": the
-  // last close lands a touch above entry, i.e. a small unrealized profit. A deep
-  // block of older bars is spliced onto the front — matched in price and time at
-  // the seam — so viewers can scroll back through weeks of history continuously
-  // (fixLeftEdge keeps it void-free) without altering the recent candles or any
-  // of the position numbers.
-  const { bars, current, entryTime } = useMemo(() => {
-    const step = 30 * 60;
-    const raw = generateMarketBars("NQ", "30m", 220);
-    const shift = TRADE.entry + 25.5 - raw[raw.length - 1].close;
-    const recent = raw.map((bar) => ({
-      ...bar,
-      open: bar.open + shift,
-      high: bar.high + shift,
-      low: bar.low + shift,
-      close: bar.close + shift,
-    }));
+  /* ------------------------- market data plumbing ------------------------ */
 
-    // Older history: a longer demo run, re-priced so its final close meets the
-    // first recent open, and re-timed to sit immediately before it.
-    const olderRaw = generateMarketBars("NQ", "30m", 1300);
-    const olderShift = recent[0].open - olderRaw[olderRaw.length - 1].close;
-    const older = olderRaw.slice(0, -1).map((bar, index, arr) => ({
-      open: bar.open + olderShift,
-      high: bar.high + olderShift,
-      low: bar.low + olderShift,
-      close: bar.close + olderShift,
-      volume: bar.volume,
-      time: recent[0].time - (arr.length - index) * step,
-    }));
-    const merged = [...older, ...recent];
+  const loadHistory = useCallback(async () => {
+    try {
+      const response = await fetch(
+        `/api/market/history?family=${FAMILY}&timeframe=${TIMEFRAME}`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) {
+        throw new Error("history failed");
+      }
+      const history = (await response.json()) as {
+        provider: "demo" | "databento";
+        delayed: boolean;
+        bars: MarketBar[];
+      };
+      setBars(history.bars);
+      seenBarTimesRef.current = new Set(history.bars.map((bar) => bar.time));
+      setProvider(history.provider);
+      setDelayed(history.delayed);
+      setHasMoreHistory(history.bars.length > 0);
+      pagedBackRef.current = false;
+    } catch {
+      const demo = generateMarketBars(FAMILY, TIMEFRAME);
+      setBars(demo);
+      seenBarTimesRef.current = new Set(demo.map((bar) => bar.time));
+      setProvider("demo");
+      setDelayed(true);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-    // Pin the entry marker to the recent bar nearest the entry price.
-    let entryIdx = merged.length - 8;
-    let best = Infinity;
-    for (let i = Math.max(0, merged.length - 36); i < merged.length - 2; i += 1) {
-      const diff = Math.abs(merged[i].close - TRADE.entry);
-      if (diff < best) {
-        best = diff;
-        entryIdx = i;
+  useEffect(() => {
+    queueMicrotask(() => void loadHistory());
+  }, [loadHistory]);
+
+  // Back-scroll (same contract as the dashboard: dedupe, one in flight,
+  // empty older window = start of history).
+  const loadOlderHistory = useCallback(
+    async (beforeTime: number) => {
+      if (olderLoadingRef.current || !hasMoreHistory) {
+        return;
+      }
+      olderLoadingRef.current = true;
+      setLoadingOlder(true);
+      try {
+        const chunk = Math.min(1500, barCountFor(TIMEFRAME) * 2);
+        const response = await fetch(
+          `/api/market/history?family=${FAMILY}&timeframe=${TIMEFRAME}&before=${beforeTime}&count=${chunk}`,
+          { cache: "no-store" },
+        );
+        if (!response.ok) {
+          return;
+        }
+        const history = (await response.json()) as { bars: MarketBar[] };
+        const older = history.bars.filter(
+          (bar) =>
+            bar.time < beforeTime && !seenBarTimesRef.current.has(bar.time),
+        );
+        if (older.length === 0) {
+          setHasMoreHistory(false);
+          return;
+        }
+        for (const bar of older) {
+          seenBarTimesRef.current.add(bar.time);
+        }
+        pagedBackRef.current = true;
+        setBars((current) =>
+          [...older, ...current].sort((a, b) => a.time - b.time),
+        );
+      } catch {
+        // transient; the next scroll retries
+      } finally {
+        olderLoadingRef.current = false;
+        setLoadingOlder(false);
+      }
+    },
+    [hasMoreHistory],
+  );
+
+  // Live stream (public viewer token). Bars fold into the 30m bucket.
+  useEffect(() => {
+    let disposed = false;
+    let socket: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+    let attempt = 0;
+
+    async function connect() {
+      if (disposed) {
+        return;
+      }
+      setStreamStatus(attempt === 0 ? "connecting" : "reconnecting");
+      try {
+        const response = await fetch("/api/market/stream-token", {
+          method: "POST",
+        });
+        if (response.status === 503) {
+          setStreamStatus("unavailable");
+          return;
+        }
+        if (!response.ok) {
+          throw new Error("token failed");
+        }
+        const body = (await response.json()) as { token: string; url: string };
+        const url = new URL(body.url);
+        url.searchParams.set("token", body.token);
+        socket = new WebSocket(url);
+
+        socket.onopen = () => {
+          attempt = 0;
+          setStreamStatus("live");
+        };
+        socket.onmessage = (event) => {
+          let message: {
+            type: string;
+            state?: string;
+            family?: string;
+            bar?: MarketBar;
+          };
+          try {
+            message = JSON.parse(String(event.data));
+          } catch {
+            return;
+          }
+          if (message.type === "status") {
+            setStreamStatus(message.state === "connected" ? "live" : "reconnecting");
+            return;
+          }
+          if (message.type === "bar" && message.family === FAMILY && message.bar) {
+            setDelayed(false);
+            setProvider("databento");
+            setBars((current) => applyLiveBar(current, message.bar!, TIMEFRAME));
+          }
+        };
+        socket.onerror = () => socket?.close();
+        socket.onclose = () => {
+          if (disposed) {
+            return;
+          }
+          attempt += 1;
+          setStreamStatus("reconnecting");
+          reconnectTimer = window.setTimeout(
+            () => void connect(),
+            Math.min(30_000, 1_000 * 2 ** Math.min(attempt, 5)),
+          );
+        };
+      } catch {
+        if (disposed) {
+          return;
+        }
+        attempt += 1;
+        setStreamStatus("reconnecting");
+        reconnectTimer = window.setTimeout(
+          () => void connect(),
+          Math.min(30_000, 1_000 * 2 ** Math.min(attempt, 5)),
+        );
       }
     }
-    return {
-      bars: merged,
-      current: merged[merged.length - 1].close,
-      entryTime: merged[entryIdx].time,
+
+    void connect();
+    return () => {
+      disposed = true;
+      socket?.close();
+      if (reconnectTimer !== null) {
+        window.clearTimeout(reconnectTimer);
+      }
     };
   }, []);
 
-  const trade = useMemo<ChartTrade>(
-    () => ({
-      side: TRADE.side,
-      quantity: TRADE.quantity,
-      entry: TRADE.entry,
-      takeProfit: TRADE.takeProfit,
-      stopLoss: TRADE.stopLoss,
-      entryTime,
-    }),
-    [entryTime],
-  );
+  // Gentle historical refresh while the live stream is down (skipped once the
+  // visitor has paged back so their scroll position isn't clobbered).
+  useEffect(() => {
+    if (provider !== "databento" || streamStatus === "live") {
+      return;
+    }
+    const interval = window.setInterval(() => {
+      if (!pagedBackRef.current && !olderLoadingRef.current) {
+        void loadHistory();
+      }
+    }, 60_000);
+    return () => window.clearInterval(interval);
+  }, [provider, streamStatus, loadHistory]);
+
+  /* --------------------- live public state (trades + fibs) --------------------- */
+
+  useEffect(() => {
+    let disposed = false;
+    async function poll() {
+      try {
+        const response = await fetch("/api/public/state", { cache: "no-store" });
+        if (response.ok && !disposed) {
+          setPublicState((await response.json()) as PublicState);
+        }
+      } catch {
+        // keep the last known state
+      }
+    }
+    void poll();
+    const interval = window.setInterval(() => void poll(), 5_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  /* ------------------------------- derived ------------------------------- */
 
   const lastBar = bars[bars.length - 1];
   const prevBar = bars[bars.length - 2];
+  const current = lastBar?.close ?? 0;
   const change = lastBar && prevBar ? lastBar.close - prevBar.close : 0;
   const changePct = prevBar ? (change / prevBar.close) * 100 : 0;
   const ema20 = useMemo(() => computeEma(bars, 20), [bars]);
   const ema50 = useMemo(() => computeEma(bars, 50), [bars]);
 
-  const pnl = (current - TRADE.entry) * TRADE.quantity * TRADE.multiplier;
-  const margin = (TRADE.entry * TRADE.quantity * TRADE.multiplier) / TRADE.leverage;
-  const pnlPct = (pnl / margin) * 100;
+  // Real open trades when the public feed is live; otherwise a single demo
+  // presentation derived from the real price level so the page never demos
+  // against numbers that contradict the chart.
+  const openTrades = useMemo<PublicTrade[]>(() => {
+    if (publicState?.available) {
+      return publicState.trades;
+    }
+    if (!lastBar) {
+      return [];
+    }
+    const entry = Math.round((lastBar.close - 25.5) / 0.25) * 0.25;
+    return [
+      {
+        id: "demo",
+        family: FAMILY,
+        symbol: "NQ1!",
+        side: "long",
+        quantity: 4,
+        entryPrice: entry,
+        takeProfit: entry + 337.5,
+        stopLoss: entry - 357.5,
+        mode: "paper",
+        openedAt: new Date(
+          (bars[Math.max(0, bars.length - 8)]?.time ?? 0) * 1000,
+        ).toISOString(),
+      },
+    ];
+  }, [publicState, lastBar, bars]);
+
+  // The chart overlays the most recent open trade on its own family.
+  const chartTrade = useMemo<ChartTrade | null>(() => {
+    const trade = openTrades.find((item) => item.family === FAMILY);
+    if (!trade || bars.length === 0) {
+      return null;
+    }
+    const bucket = timeframeBucketStart(
+      Math.floor(new Date(trade.openedAt).getTime() / 1000),
+      TIMEFRAME,
+    );
+    return {
+      side: trade.side,
+      quantity: trade.quantity,
+      entry: trade.entryPrice,
+      takeProfit: trade.takeProfit,
+      stopLoss: trade.stopLoss,
+      entryTime: Math.max(bucket, bars[0].time),
+    };
+  }, [openTrades, bars]);
+
+  // Admin fib drawings for this chart, honoring the visitor's toggle.
+  const viewerFibs = useMemo<FibDrawing[]>(() => {
+    if (!showDrawings || !publicState?.available) {
+      return [];
+    }
+    return publicState.fibs.filter(
+      (fib) => fib.family === FAMILY && fib.visible,
+    );
+  }, [publicState, showDrawings]);
 
   const quotes = useMemo(
-    () => TICKER_QUOTES.map((q) => (q.symbol === "NQ1!" ? { ...q, price: current } : q)),
+    () =>
+      TICKER_QUOTES.map((quote) =>
+        quote.symbol === "NQ1!" && current > 0
+          ? { ...quote, price: current }
+          : quote,
+      ),
     [current],
   );
+
+  const dataLabel =
+    provider === "databento"
+      ? streamStatus === "live" && !delayed
+        ? "DATABENTO LIVE"
+        : "DATABENTO HISTORICAL"
+      : loading
+        ? "CONNECTING LIVE DATA"
+        : "DETERMINISTIC DEMO FEED";
+
+  const rail: {
+    id: ViewerTool | "drawings";
+    icon: typeof Crosshair;
+    label: string;
+  }[] = [
+    { id: "crosshair", icon: Crosshair, label: "Crosshair" },
+    { id: "measure", icon: Ruler, label: "Measure" },
+    { id: "zoom", icon: ZoomIn, label: "Zoom" },
+    {
+      id: "drawings",
+      icon: showDrawings ? Eye : EyeOff,
+      label: showDrawings ? "Hide fib drawings" : "Show fib drawings",
+    },
+  ];
 
   return (
     <BootProvider value={{ active: false, phase: "done" }}>
@@ -201,7 +454,7 @@ export function ViewerWorkspace() {
           <div className="flex items-center gap-2.5">
             <button
               onClick={() =>
-                setTheme((current) => (current === "light" ? "dark" : "light"))
+                setTheme((value) => (value === "light" ? "dark" : "light"))
               }
               aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
               title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
@@ -225,7 +478,9 @@ export function ViewerWorkspace() {
               <div className="px-3 py-2.5">
                 <p className="text-[10px] font-medium">Notifications</p>
                 <p className="mt-1.5 text-[9px] leading-4 text-ink-2">
-                  Yazan opened a new NQ long — 4 contracts at 29,332.50.
+                  {openTrades.length > 0
+                    ? `Yazan has ${openTrades.length} open position${openTrades.length === 1 ? "" : "s"} — watch them live on this page.`
+                    : "No open positions right now — new trades appear here live."}
                 </p>
               </div>
             </Dropdown>
@@ -250,19 +505,17 @@ export function ViewerWorkspace() {
               }
             >
               {(close) => (
-                <>
-                  <MenuItem
-                    onSelect={() => {
-                      close();
-                      window.location.assign("/login");
-                    }}
-                  >
-                    <span className="flex items-center gap-2.5">
-                      <LogIn size={14} />
-                      Sign in
-                    </span>
-                  </MenuItem>
-                </>
+                <MenuItem
+                  onSelect={() => {
+                    close();
+                    window.location.assign("/login");
+                  }}
+                >
+                  <span className="flex items-center gap-2.5">
+                    <LogIn size={14} />
+                    Sign in
+                  </span>
+                </MenuItem>
               )}
             </Dropdown>
           </div>
@@ -270,7 +523,7 @@ export function ViewerWorkspace() {
 
         {/* ----- ticker strip ----- */}
         <div className="shrink-0">
-          <TickerStrip quotes={quotes} />
+          <TickerStrip quotes={quotes} livePrice={current > 0 ? current : null} />
         </div>
 
         {/* ----- body ----- */}
@@ -293,24 +546,32 @@ export function ViewerWorkspace() {
             </div>
 
             <div className="relative flex min-h-0 flex-1 overflow-hidden rounded-xl border border-line bg-card">
-              {/* tool rail (read-only) */}
+              {/* tool rail — every control does something */}
               <aside className="flex w-11 shrink-0 flex-col items-center gap-0.5 overflow-y-auto border-r border-line py-2">
-                {CHART_TOOLS.map((tool, index) => (
-                  <button
-                    key={tool.label}
-                    onClick={() => setActiveTool(index)}
-                    aria-label={tool.label}
-                    title={tool.label}
-                    className={cn(
-                      "v-press grid h-8 w-8 shrink-0 place-items-center rounded-lg",
-                      activeTool === index
-                        ? "bg-card-soft text-[#4b8ee8]"
-                        : "text-ink-2 hover:bg-card-soft hover:text-ink",
-                    )}
-                  >
-                    <tool.icon size={15} />
-                  </button>
-                ))}
+                {rail.map((tool) => {
+                  const active =
+                    tool.id === "drawings" ? showDrawings : activeTool === tool.id;
+                  return (
+                    <button
+                      key={tool.id}
+                      onClick={() =>
+                        tool.id === "drawings"
+                          ? setShowDrawings((value) => !value)
+                          : setActiveTool(tool.id as ViewerTool)
+                      }
+                      aria-label={tool.label}
+                      title={tool.label}
+                      className={cn(
+                        "v-press grid h-8 w-8 shrink-0 place-items-center rounded-lg",
+                        active
+                          ? "bg-card-soft text-[#4b8ee8]"
+                          : "text-ink-2 hover:bg-card-soft hover:text-ink",
+                      )}
+                    >
+                      <tool.icon size={15} />
+                    </button>
+                  );
+                })}
               </aside>
 
               {/* chart + legend */}
@@ -318,9 +579,14 @@ export function ViewerWorkspace() {
                 <div className="pointer-events-none absolute left-3 top-2.5 z-20 select-none">
                   <div className="flex items-center gap-2 font-mono text-[10px]">
                     <span className="font-semibold text-ink">
-                      {TRADE.symbol} · 30m · {TRADE.exchange}
+                      NQ1! · {TIMEFRAME} · {EXCHANGE}
                     </span>
-                    <span className="h-1.5 w-1.5 rounded-full bg-up" />
+                    <span
+                      className={cn(
+                        "h-1.5 w-1.5 rounded-full",
+                        loading ? "animate-pulse bg-[#d7a33f]" : "bg-up",
+                      )}
+                    />
                     {lastBar ? (
                       <span className="flex items-center gap-1.5 tabular-nums">
                         <span className="text-ink-2">
@@ -363,13 +629,17 @@ export function ViewerWorkspace() {
 
                 <MarketChart
                   bars={bars}
-                  family="NQ"
-                  timeframe="30m"
-                  fibs={[]}
-                  dataLabel="LIVE PREVIEW"
+                  family={FAMILY}
+                  timeframe={TIMEFRAME}
+                  fibs={viewerFibs}
+                  dataLabel={dataLabel}
                   theme={theme}
-                  trade={trade}
+                  trade={showDrawings ? chartTrade : null}
                   readOnly
+                  tool={activeTool}
+                  onLoadOlder={(oldestTime) => void loadOlderHistory(oldestTime)}
+                  canLoadOlder={hasMoreHistory && !loading}
+                  isLoadingOlder={loadingOlder}
                   onUpdateFib={() => {}}
                 />
               </div>
@@ -383,77 +653,121 @@ export function ViewerWorkspace() {
                 Open Trades
               </h2>
               <span className="grid h-5 min-w-5 place-items-center rounded-full bg-chip px-1.5 text-[10px] font-semibold text-chip-ink">
-                1
+                {openTrades.length}
               </span>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
-              <article className="rounded-xl border border-line bg-card p-4">
-                <div className="flex items-center justify-between">
-                  <p className="font-mono text-[12px] font-semibold">
-                    {TRADE.symbol} · {TRADE.exchange}
-                  </p>
-                  <span className="rounded-md bg-up-soft px-2 py-0.5 text-[10px] font-semibold text-up">
-                    {TRADE.side === "long" ? "Long" : "Short"}
-                  </span>
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 pb-4">
+              {openTrades.length === 0 ? (
+                <div className="rounded-xl border border-line bg-card p-4 text-[11px] text-ink-2">
+                  No open trades right now — Yazan&apos;s next position will
+                  appear here the moment it opens.
                 </div>
-
-                <dl className="mt-4 space-y-3 text-[11px]">
-                  <Row label="Quantity" value={`${TRADE.quantity} Contracts`} />
-                  <Row label="Entry Price" value={money(TRADE.entry)} mono />
-                  <Row label="Current Price" value={money(current)} mono />
-                </dl>
-
-                <div className="mt-4 space-y-3 border-t border-line pt-4 text-[11px]">
-                  <Row
-                    label="Stop Loss"
-                    labelClass="text-down"
-                    value={money(TRADE.stopLoss)}
-                    mono
-                  />
-                  <Row
-                    label="Take Profit"
-                    labelClass="text-up"
-                    value={money(TRADE.takeProfit)}
-                    mono
-                  />
-                </div>
-
-                <div className="mt-4 flex items-start justify-between border-t border-line pt-4">
-                  <span className="text-[11px] text-ink-2">Unrealized P&amp;L</span>
-                  <span className="text-right">
-                    <span
-                      className={cn(
-                        "block font-mono text-[13px] font-semibold tabular-nums",
-                        pnl >= 0 ? "text-up" : "text-down",
-                      )}
+              ) : (
+                openTrades.map((trade) => {
+                  const pointValue = POINT_VALUE[trade.symbol] ?? 20;
+                  const sign = trade.side === "long" ? 1 : -1;
+                  const mark =
+                    trade.family === FAMILY && current > 0
+                      ? current
+                      : trade.entryPrice;
+                  const pnl =
+                    (mark - trade.entryPrice) * sign * trade.quantity * pointValue;
+                  const margin =
+                    (trade.entryPrice * trade.quantity * pointValue) / 20;
+                  const pnlPct = margin > 0 ? (pnl / margin) * 100 : 0;
+                  return (
+                    <article
+                      key={trade.id}
+                      className="rounded-xl border border-line bg-card p-4"
                     >
-                      {pnl >= 0 ? "+" : "-"}
-                      {money(Math.abs(pnl))} USD
-                    </span>
-                    <span
-                      className={cn(
-                        "mt-0.5 block font-mono text-[10px] tabular-nums",
-                        pnl >= 0 ? "text-up" : "text-down",
-                      )}
-                    >
-                      ({pnl >= 0 ? "+" : "-"}
-                      {Math.abs(pnlPct).toFixed(2)}%)
-                    </span>
-                  </span>
-                </div>
+                      <div className="flex items-center justify-between">
+                        <p className="font-mono text-[12px] font-semibold">
+                          {trade.symbol} ·{" "}
+                          {trade.family === "NQ"
+                            ? "CME"
+                            : trade.family === "YM"
+                              ? "CBOT"
+                              : "COMEX"}
+                        </p>
+                        <span
+                          className={cn(
+                            "rounded-md px-2 py-0.5 text-[10px] font-semibold",
+                            trade.side === "long"
+                              ? "bg-up-soft text-up"
+                              : "bg-down-soft text-down",
+                          )}
+                        >
+                          {trade.side === "long" ? "Long" : "Short"}
+                        </span>
+                      </div>
 
-                <div className="mt-4 space-y-3 border-t border-line pt-4 text-[11px]">
-                  <Row label="Opened" value={TRADE.openedLabel} mono />
-                  <div className="flex items-center justify-between">
-                    <span className="text-ink-2">Status</span>
-                    <span className="flex items-center gap-1.5 font-medium text-up">
-                      <span className="h-1.5 w-1.5 rounded-full bg-up" />
-                      Open
-                    </span>
-                  </div>
-                </div>
-              </article>
+                      <dl className="mt-4 space-y-3 text-[11px]">
+                        <Row
+                          label="Quantity"
+                          value={`${trade.quantity} Contract${trade.quantity === 1 ? "" : "s"}`}
+                        />
+                        <Row label="Entry Price" value={money(trade.entryPrice)} mono />
+                        <Row label="Current Price" value={money(mark)} mono />
+                      </dl>
+
+                      <div className="mt-4 space-y-3 border-t border-line pt-4 text-[11px]">
+                        <Row
+                          label="Stop Loss"
+                          labelClass="text-down"
+                          value={trade.stopLoss !== null ? money(trade.stopLoss) : "—"}
+                          mono
+                        />
+                        <Row
+                          label="Take Profit"
+                          labelClass="text-up"
+                          value={
+                            trade.takeProfit !== null ? money(trade.takeProfit) : "—"
+                          }
+                          mono
+                        />
+                      </div>
+
+                      <div className="mt-4 flex items-start justify-between border-t border-line pt-4">
+                        <span className="text-[11px] text-ink-2">
+                          Unrealized P&amp;L
+                        </span>
+                        <span className="text-right">
+                          <span
+                            className={cn(
+                              "block font-mono text-[13px] font-semibold tabular-nums",
+                              pnl >= 0 ? "text-up" : "text-down",
+                            )}
+                          >
+                            {pnl >= 0 ? "+" : "-"}
+                            {money(Math.abs(pnl))} USD
+                          </span>
+                          <span
+                            className={cn(
+                              "mt-0.5 block font-mono text-[10px] tabular-nums",
+                              pnl >= 0 ? "text-up" : "text-down",
+                            )}
+                          >
+                            ({pnl >= 0 ? "+" : "-"}
+                            {Math.abs(pnlPct).toFixed(2)}%)
+                          </span>
+                        </span>
+                      </div>
+
+                      <div className="mt-4 space-y-3 border-t border-line pt-4 text-[11px]">
+                        <Row label="Opened" value={openedLabel(trade.openedAt)} mono />
+                        <div className="flex items-center justify-between">
+                          <span className="text-ink-2">Status</span>
+                          <span className="flex items-center gap-1.5 font-medium text-up">
+                            <span className="h-1.5 w-1.5 rounded-full bg-up" />
+                            Open
+                          </span>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })
+              )}
             </div>
           </div>
         </section>
