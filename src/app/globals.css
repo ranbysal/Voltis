@@ -255,13 +255,6 @@
   font-style: normal;
 }
 
-/* IBM Plex Mono has no official Condensed cut; the nav links carry a
-   synthetic condensation so they read as the condensed style. */
-.v-condensed {
-  display: inline-block;
-  transform: scaleX(0.86);
-}
-
 /* Masked slide-up reveal: the inner element starts translated fully below
    the wrapper's overflow:hidden line and is pushed up by the timeline. */
 .v-mask {

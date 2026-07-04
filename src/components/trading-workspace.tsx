@@ -1480,9 +1480,9 @@ export function TradingWorkspace() {
           data-boot-content
           onClick={() => window.location.assign("/")}
           aria-label="Voltis home"
-          className="text-[21px] font-semibold tracking-[-0.04em] transition-opacity hover:opacity-70"
+          className="v-serif text-[20px] tracking-[0.2em] text-ink transition-opacity hover:opacity-70"
         >
-          Voltis
+          VOLTIS
         </button>
 
         <div data-boot-content className="flex items-center gap-2.5">
@@ -1616,7 +1616,7 @@ export function TradingWorkspace() {
           ) : (
             <div data-boot-region="2" className="shrink-0">
               <div data-boot-content className="flex shrink-0 items-center gap-3 pb-3 pt-4">
-                <h1 className="text-[26px] font-semibold tracking-[-0.03em]">
+                <h1 className="v-serif text-[30px] leading-none text-ink">
                   Overview
                 </h1>
                 <span className="ml-1 grid grid-cols-3 gap-[2px]">

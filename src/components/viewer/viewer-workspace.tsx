@@ -517,9 +517,9 @@ export function ViewerWorkspace() {
           <button
             onClick={() => window.location.assign("/")}
             aria-label="Voltis home"
-            className="text-[21px] font-semibold tracking-[-0.04em] transition-opacity hover:opacity-70"
+            className="v-serif text-[20px] tracking-[0.2em] text-ink transition-opacity hover:opacity-70"
           >
-            Voltis
+            VOLTIS
           </button>
 
           <div className="flex items-center gap-2.5">
@@ -602,7 +602,7 @@ export function ViewerWorkspace() {
           {/* left column: heading + chart */}
           <div className="flex min-w-0 flex-1 flex-col px-5 pb-4">
             <div className="flex shrink-0 items-center gap-3 pb-3 pt-4">
-              <h1 className="text-[26px] font-semibold tracking-[-0.03em]">
+              <h1 className="v-serif text-[30px] leading-none text-ink">
                 Overview
               </h1>
               <span className="ml-1 grid grid-cols-3 gap-[2px]">
@@ -720,7 +720,7 @@ export function ViewerWorkspace() {
           {/* right column: open trades */}
           <div className="flex w-[340px] shrink-0 flex-col border-l border-line bg-panel">
             <div className="flex items-center justify-between px-5 pb-3 pt-5">
-              <h2 className="text-[15px] font-semibold tracking-[-0.02em]">
+              <h2 className="v-serif text-[19px] leading-none text-ink">
                 Open Trades
               </h2>
               <span className="grid h-5 min-w-5 place-items-center rounded-full bg-chip px-1.5 text-[10px] font-semibold text-chip-ink">

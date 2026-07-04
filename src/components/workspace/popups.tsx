@@ -40,7 +40,7 @@ function PopupShell({
       style={{ boxShadow: "var(--glow), 0 28px 70px rgba(0,0,0,0.22)" }}
     >
       <header className="flex items-center justify-between border-b border-line px-4 py-3">
-        <h2 className="text-[13px] font-semibold tracking-[-0.02em]">
+        <h2 className="v-serif text-[16px] leading-none text-ink">
           {title}
         </h2>
         <button

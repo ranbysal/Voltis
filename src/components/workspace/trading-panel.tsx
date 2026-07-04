@@ -235,7 +235,7 @@ export function TradingPanel({
   return (
     <aside className="flex w-[272px] shrink-0 flex-col border-l border-line bg-panel">
       <div data-boot-content className="flex items-center justify-between px-4 pb-2 pt-4">
-        <span className="flex items-center gap-2 text-[13px] font-semibold tracking-[-0.02em]">
+        <span className="v-serif flex items-center gap-2 text-[16px] leading-none text-ink">
           <ArrowUpFromLine size={13} className="text-ink-2" />
           Trading Panel
         </span>

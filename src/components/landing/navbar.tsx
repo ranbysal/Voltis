@@ -27,8 +27,8 @@ export function Navbar({
           data-nav-item
           aria-label="VOLTIS"
           onClick={onHome}
-          className="block select-none font-medium text-[#1f1f21]"
-          style={{ fontSize: u(44), letterSpacing: "0.18em", lineHeight: 1.1 }}
+          className="v-serif block select-none text-[#1f1f21]"
+          style={{ fontSize: u(42), letterSpacing: "0.2em", lineHeight: 1.1 }}
         >
           <ScrambleText
             text="VOLTIS"
@@ -42,7 +42,7 @@ export function Navbar({
         </button>
       </div>
       <nav
-        className="absolute flex items-baseline text-[#2c2c2e]"
+        className="v-serif absolute flex items-baseline text-[#2c2c2e]"
         style={{ right: u(28), top: u(28), gap: u(46) }}
       >
         <div className="v-mask">
@@ -53,17 +53,15 @@ export function Navbar({
             className="transition-colors duration-200 hover:text-black"
             style={{ fontSize: u(22), letterSpacing: "0.02em", lineHeight: 1.2 }}
           >
-            <span className="v-condensed" style={{ transformOrigin: "100% 50%" }}>
-              <ScrambleText
-                text="Viewer"
-                mode="decodeOut"
-                play={scrambling}
-                charStaggerMs={ms(28)}
-                cycleMs={ms(50)}
-                holdMs={ms(260)}
-                truncStaggerMs={ms(55)}
-              />
-            </span>
+            <ScrambleText
+              text="Viewer"
+              mode="decodeOut"
+              play={scrambling}
+              charStaggerMs={ms(28)}
+              cycleMs={ms(50)}
+              holdMs={ms(260)}
+              truncStaggerMs={ms(55)}
+            />
           </button>
         </div>
         <div className="v-mask">
@@ -74,17 +72,15 @@ export function Navbar({
             className="transition-colors duration-200 hover:text-black"
             style={{ fontSize: u(22), letterSpacing: "0.02em", lineHeight: 1.2 }}
           >
-            <span className="v-condensed" style={{ transformOrigin: "100% 50%" }}>
-              <ScrambleText
-                text="Login"
-                mode="decodeOut"
-                play={scrambling}
-                charStaggerMs={ms(28)}
-                cycleMs={ms(50)}
-                holdMs={ms(260)}
-                truncStaggerMs={ms(55)}
-              />
-            </span>
+            <ScrambleText
+              text="Login"
+              mode="decodeOut"
+              play={scrambling}
+              charStaggerMs={ms(28)}
+              cycleMs={ms(50)}
+              holdMs={ms(260)}
+              truncStaggerMs={ms(55)}
+            />
           </button>
         </div>
       </nav>

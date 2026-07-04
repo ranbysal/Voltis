@@ -43,7 +43,7 @@ export function FibLayersPanel({
   return (
     <aside className="flex w-[176px] shrink-0 flex-col border-l border-line bg-panel">
       <div data-boot-content className="flex items-center justify-between px-3.5 pb-2 pt-4">
-        <span className="text-[13px] font-semibold tracking-[-0.02em]">
+        <span className="v-serif text-[16px] leading-none text-ink">
           Fib Layers
         </span>
         <button

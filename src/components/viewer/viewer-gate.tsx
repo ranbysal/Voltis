@@ -52,9 +52,9 @@ export function ViewerGate() {
         <button
           onClick={() => window.location.assign("/")}
           aria-label="Voltis home"
-          className="mb-6 block text-[21px] font-semibold tracking-[-0.04em] transition-opacity hover:opacity-70"
+          className="v-serif mb-6 block text-[22px] tracking-[0.2em] text-ink transition-opacity hover:opacity-70"
         >
-          Voltis
+          VOLTIS
         </button>
 
         <div className="rounded-xl border border-line bg-card p-6">
@@ -63,7 +63,7 @@ export function ViewerGate() {
               <Lock size={15} />
             </span>
             <div>
-              <h1 className="text-[15px] font-semibold tracking-[-0.02em]">
+              <h1 className="v-serif text-[19px] leading-none text-ink">
                 Viewer access
               </h1>
               <p className="text-[10px] text-ink-2">
