@@ -110,6 +110,9 @@ export function ViewerWorkspace() {
   const [hasMoreHistory, setHasMoreHistory] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [publicState, setPublicState] = useState<PublicState | null>(null);
+  // Fallback demo presentation, derived ONCE from the first real window so its
+  // overlay lines don't wander with every tick.
+  const [demoTrade, setDemoTrade] = useState<PublicTrade | null>(null);
 
   const seenBarTimesRef = useRef<Set<number>>(new Set());
   const olderLoadingRef = useRef(false);
@@ -148,14 +151,42 @@ export function ViewerWorkspace() {
       setDelayed(history.delayed);
       setHasMoreHistory(history.bars.length > 0);
       pagedBackRef.current = false;
+      seedDemoTrade(history.bars);
     } catch {
       const demo = generateMarketBars(FAMILY, TIMEFRAME);
       setBars(demo);
       seenBarTimesRef.current = new Set(demo.map((bar) => bar.time));
       setProvider("demo");
       setDelayed(true);
+      seedDemoTrade(demo);
     } finally {
       setLoading(false);
+    }
+
+    // Anchored to the loaded window once, so the presentation is internally
+    // consistent with the chart yet perfectly still between refreshes.
+    function seedDemoTrade(loaded: MarketBar[]) {
+      if (loaded.length === 0) {
+        return;
+      }
+      const lastClose = loaded[loaded.length - 1].close;
+      const entry = Math.round((lastClose - 25.5) / 0.25) * 0.25;
+      setDemoTrade((existing) =>
+        existing ?? {
+          id: "demo",
+          family: FAMILY,
+          symbol: "NQ1!",
+          side: "long",
+          quantity: 4,
+          entryPrice: entry,
+          takeProfit: entry + 337.5,
+          stopLoss: entry - 357.5,
+          mode: "paper",
+          openedAt: new Date(
+            (loaded[Math.max(0, loaded.length - 8)]?.time ?? 0) * 1000,
+          ).toISOString(),
+        },
+      );
     }
   }, []);
 
@@ -296,19 +327,69 @@ export function ViewerWorkspace() {
     };
   }, []);
 
-  // Gentle historical refresh while the live stream is down (skipped once the
-  // visitor has paged back so their scroll position isn't clobbered).
+  // Silent tail refresh while the live stream is down: merge just the latest
+  // buckets into the end of the series — no loading state, no window replace,
+  // no view shift, and safe mid-back-scroll (older bars are never touched).
+  const refreshLatestBars = useCallback(async () => {
+    try {
+      const response = await fetch(
+        `/api/market/history?family=${FAMILY}&timeframe=${TIMEFRAME}&count=10`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) {
+        return;
+      }
+      const history = (await response.json()) as {
+        provider: string;
+        bars: MarketBar[];
+      };
+      if (history.provider !== "databento" || history.bars.length === 0) {
+        return;
+      }
+      for (const bar of history.bars) {
+        seenBarTimesRef.current.add(bar.time);
+      }
+      setBars((current) => {
+        if (current.length === 0) {
+          return current;
+        }
+        const lastTime = current[current.length - 1].time;
+        let next: MarketBar[] | null = null;
+        for (const bar of history.bars) {
+          if (bar.time < lastTime) {
+            continue;
+          }
+          if (bar.time === lastTime) {
+            const existing = (next ?? current)[current.length - 1];
+            if (
+              existing.close !== bar.close ||
+              existing.high !== bar.high ||
+              existing.low !== bar.low
+            ) {
+              next = next ?? [...current];
+              next[current.length - 1] = bar;
+            }
+          } else {
+            next = next ?? [...current];
+            next.push(bar);
+          }
+        }
+        return next ?? current;
+      });
+    } catch {
+      // silent — the next tick retries
+    }
+  }, []);
+
   useEffect(() => {
     if (provider !== "databento" || streamStatus === "live") {
       return;
     }
     const interval = window.setInterval(() => {
-      if (!pagedBackRef.current && !olderLoadingRef.current) {
-        void loadHistory();
-      }
-    }, 60_000);
+      void refreshLatestBars();
+    }, 20_000);
     return () => window.clearInterval(interval);
-  }, [provider, streamStatus, loadHistory]);
+  }, [provider, streamStatus, refreshLatestBars]);
 
   /* --------------------- live public state (trades + fibs) --------------------- */
 
@@ -342,54 +423,44 @@ export function ViewerWorkspace() {
   const ema20 = useMemo(() => computeEma(bars, 20), [bars]);
   const ema50 = useMemo(() => computeEma(bars, 50), [bars]);
 
-  // Real open trades when the public feed is live; otherwise a single demo
-  // presentation derived from the real price level so the page never demos
-  // against numbers that contradict the chart.
+  // Real open trades when the public feed is live; otherwise the single demo
+  // presentation seeded from the first loaded window.
   const openTrades = useMemo<PublicTrade[]>(() => {
     if (publicState?.available) {
       return publicState.trades;
     }
-    if (!lastBar) {
-      return [];
-    }
-    const entry = Math.round((lastBar.close - 25.5) / 0.25) * 0.25;
-    return [
-      {
-        id: "demo",
-        family: FAMILY,
-        symbol: "NQ1!",
-        side: "long",
-        quantity: 4,
-        entryPrice: entry,
-        takeProfit: entry + 337.5,
-        stopLoss: entry - 357.5,
-        mode: "paper",
-        openedAt: new Date(
-          (bars[Math.max(0, bars.length - 8)]?.time ?? 0) * 1000,
-        ).toISOString(),
-      },
-    ];
-  }, [publicState, lastBar, bars]);
+    return demoTrade ? [demoTrade] : [];
+  }, [publicState, demoTrade]);
 
-  // The chart overlays the most recent open trade on its own family.
+  // The chart overlays the most recent open trade on its own family. Built
+  // from PRIMITIVE deps so its identity is stable across the 5s state polls
+  // and bar ticks — otherwise the Entry/TP/SL price lines and the position
+  // marker would detach and re-attach (a visible blink) on every poll.
+  const activeTrade = openTrades.find((item) => item.family === FAMILY) ?? null;
+  const firstBarTime = bars.length > 0 ? bars[0].time : null;
+  const atSide = activeTrade?.side ?? null;
+  const atQuantity = activeTrade?.quantity ?? 0;
+  const atEntry = activeTrade?.entryPrice ?? 0;
+  const atTakeProfit = activeTrade?.takeProfit ?? null;
+  const atStopLoss = activeTrade?.stopLoss ?? null;
+  const atOpenedAt = activeTrade?.openedAt ?? null;
   const chartTrade = useMemo<ChartTrade | null>(() => {
-    const trade = openTrades.find((item) => item.family === FAMILY);
-    if (!trade || bars.length === 0) {
+    if (atSide === null || atOpenedAt === null || firstBarTime === null) {
       return null;
     }
     const bucket = timeframeBucketStart(
-      Math.floor(new Date(trade.openedAt).getTime() / 1000),
+      Math.floor(new Date(atOpenedAt).getTime() / 1000),
       TIMEFRAME,
     );
     return {
-      side: trade.side,
-      quantity: trade.quantity,
-      entry: trade.entryPrice,
-      takeProfit: trade.takeProfit,
-      stopLoss: trade.stopLoss,
-      entryTime: Math.max(bucket, bars[0].time),
+      side: atSide,
+      quantity: atQuantity,
+      entry: atEntry,
+      takeProfit: atTakeProfit,
+      stopLoss: atStopLoss,
+      entryTime: Math.max(bucket, firstBarTime),
     };
-  }, [openTrades, bars]);
+  }, [atSide, atQuantity, atEntry, atTakeProfit, atStopLoss, atOpenedAt, firstBarTime]);
 
   // Admin fib drawings for this chart, honoring the visitor's toggle.
   const viewerFibs = useMemo<FibDrawing[]>(() => {

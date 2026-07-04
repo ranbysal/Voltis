@@ -102,6 +102,8 @@ type MarketChartProps = {
   hideDrawings?: boolean;
   /** Persisted trend-line / text annotations for the active family. */
   drawings?: ChartDrawing[];
+  /** Fib layer emphasized from the panel: full opacity + anchor connector. */
+  selectedFibId?: string | null;
   onCreateDrawing?: (
     drawing: Omit<ChartDrawing, "id" | "updatedAt">,
   ) => void;
@@ -121,6 +123,7 @@ type FibGeometry = {
   color: string;
   opacity: number;
   isActive: boolean;
+  isSelected: boolean;
   lines: { level: number; price: number; y: number }[];
   startX: number | null;
   endX: number | null;
@@ -183,17 +186,32 @@ export function computeEma(bars: MarketBar[], length: number) {
 function buildFibGeometry(
   chart: IChartApi,
   series: ISeriesApi<"Candlestick", Time> | ISeriesApi<"Line", Time>,
+  bars: MarketBar[],
   fibs: FibDrawing[],
   timeframe: Timeframe,
   dark: boolean,
+  selectedFibId: string | null,
 ): FibGeometry[] {
   const palette = dark ? DARK_TF_STYLE : LIGHT_TF_STYLE;
+  // Anchor times map through the nearest bar's LOGICAL index (clamped), so a
+  // cross-timeframe fib whose swing sits beyond the loaded window still draws
+  // its connector toward the edge instead of vanishing.
+  const ts = chart.timeScale();
+  const anchorX = (time: number) => {
+    const index = barIndexFor(bars, time);
+    return index === null
+      ? null
+      : ts.logicalToCoordinate(
+          index as unknown as Parameters<typeof ts.logicalToCoordinate>[0],
+        );
+  };
   return fibs
     .filter((fib) => fib.visible)
     .map((fib) => {
       const style = palette[fib.timeframe];
       const color = fib.direction === "buy" ? style.buy : style.sell;
       const isActive = fib.timeframe === timeframe;
+      const isSelected = fib.id === selectedFibId;
       const lines = FIB_LEVELS.map((level) => ({
         level,
         price: fibPrice(fib, level),
@@ -205,15 +223,17 @@ function buildFibGeometry(
       return {
         fib,
         color,
-        opacity: Math.min(1, style.opacity + (isActive ? 0.16 : 0)),
+        // A selected layer renders at full strength regardless of its
+        // timeframe's resting opacity, so picking a row in the panel makes
+        // that exact fib unmistakable on the chart.
+        opacity: isSelected
+          ? 1
+          : Math.min(1, style.opacity + (isActive ? 0.16 : 0)),
         isActive,
+        isSelected,
         lines,
-        startX: chart
-          .timeScale()
-          .timeToCoordinate(fib.start.time as UTCTimestamp),
-        endX: chart
-          .timeScale()
-          .timeToCoordinate(fib.end.time as UTCTimestamp),
+        startX: anchorX(fib.start.time),
+        endX: anchorX(fib.end.time),
         startY: series.priceToCoordinate(fib.start.price),
         endY: series.priceToCoordinate(fib.end.price),
       };
@@ -291,6 +311,7 @@ export function MarketChart({
   magnet = false,
   hideDrawings = false,
   drawings = [],
+  selectedFibId = null,
   onCreateDrawing,
   onUpdateDrawing,
   onUpdateFib,
@@ -308,6 +329,27 @@ export function MarketChart({
   const prevBarsLenRef = useRef(0);
   const prevFirstTimeRef = useRef<number | null>(null);
   const selKeyRef = useRef(`${family}:${timeframe}:${chartStyle}`);
+  // Incremental-feed bookkeeping: tail changes go through series.update()
+  // (TradingView-style, flicker-free) instead of a full setData. The epoch
+  // increments whenever the chart is recreated so a fresh chart always gets a
+  // full setData first.
+  const chartEpochRef = useRef(0);
+  const appliedRef = useRef<{
+    epoch: number;
+    firstTime: number;
+    length: number;
+    anchorIndex: number;
+    anchorTime: number;
+    anchorClose: number;
+  } | null>(null);
+  const emaAppliedRef = useRef<{
+    epoch: number;
+    firstTime: number;
+    length: number;
+  } | null>(null);
+  // Visible range captured immediately BEFORE a full setData, so the anchor
+  // effect can tell whether the library already re-anchored the view itself.
+  const preDataRangeRef = useRef<{ from: number; to: number } | null>(null);
   const [geometry, setGeometry] = useState<FibGeometry[]>([]);
   const [drawingGeometry, setDrawingGeometry] = useState<DrawingGeometry[]>([]);
   // Two-point drafts (fib + trend): first click sets `start`, pointer-move
@@ -502,6 +544,10 @@ export function MarketChart({
     seriesRef.current = series;
     ema20Ref.current = ema20;
     ema50Ref.current = ema50;
+    chartEpochRef.current += 1;
+    // Debug probe (harmless): lets browser tests read the live logical range.
+    (window as unknown as Record<string, unknown>).__voltisChartRange = () =>
+      chart.timeScale().getVisibleLogicalRange();
 
     return () => {
       chart.remove();
@@ -511,10 +557,13 @@ export function MarketChart({
       ema50Ref.current = null;
       // The chart is being recreated (theme/style swap). Reset the anchor
       // baseline so the fresh chart re-snaps cleanly instead of shifting the
-      // new (default) visible range against a stale prepend baseline.
+      // new (default) visible range against a stale prepend baseline, and
+      // drop the incremental-feed baselines so it receives a full setData.
       prevBarsLenRef.current = 0;
       prevFirstTimeRef.current = null;
       selKeyRef.current = "";
+      appliedRef.current = null;
+      emaAppliedRef.current = null;
     };
   }, [theme, chartStyle]);
 
@@ -529,28 +578,79 @@ export function MarketChart({
       return;
     }
 
-    series.applyOptions({
-      priceFormat: {
-        type: "price",
-        precision: family === "YM" ? 0 : 2,
-        minMove: family === "YM" ? 1 : family === "GC" ? 0.1 : 0.25,
-      },
-    });
-    if (chartStyle === "candles") {
-      (series as ISeriesApi<"Candlestick", Time>).setData(
-        bars.map((bar) => ({
-          ...bar,
-          time: bar.time as UTCTimestamp,
-        })),
-      );
+    const epoch = chartEpochRef.current;
+    const firstTime = bars[0].time;
+    const prev = appliedRef.current;
+    // Tail-only change (live tick / silent refresh append): feed the changed
+    // bars through series.update() — the flicker-free incremental path that
+    // also lets the chart's own right-edge tracking shift naturally, exactly
+    // like TradingView. Anything structural (initial load, symbol/timeframe
+    // switch, back-scroll prepend, chart recreation) takes the full setData.
+    // `anchorClose` fingerprints the body of the series: a window replacement
+    // can carry identical timestamps with entirely different prices (e.g. the
+    // seeded demo bars swapped for the server window), which must NOT slip
+    // through as an append or the chart would keep stale candles.
+    const anchorIndex = Math.max(0, bars.length - 32);
+    const incremental =
+      prev !== null &&
+      prev.epoch === epoch &&
+      prev.firstTime === firstTime &&
+      bars.length >= prev.length &&
+      bars.length - prev.length <= 8 &&
+      prev.anchorTime === bars[prev.anchorIndex]?.time &&
+      prev.anchorClose === bars[prev.anchorIndex]?.close;
+
+    if (incremental) {
+      for (let index = Math.max(0, prev.length - 1); index < bars.length; index += 1) {
+        const bar = bars[index];
+        if (chartStyle === "candles") {
+          (series as ISeriesApi<"Candlestick", Time>).update({
+            ...bar,
+            time: bar.time as UTCTimestamp,
+          });
+        } else {
+          (series as ISeriesApi<"Line", Time>).update({
+            time: bar.time as UTCTimestamp,
+            value: bar.close,
+          });
+        }
+      }
     } else {
-      (series as ISeriesApi<"Line", Time>).setData(
-        bars.map((bar) => ({
-          time: bar.time as UTCTimestamp,
-          value: bar.close,
-        })),
-      );
+      // Snapshot the range so the anchor effect (same commit, runs after this)
+      // can detect whether setData itself re-anchored the view.
+      preDataRangeRef.current =
+        chartRef.current?.timeScale().getVisibleLogicalRange() ?? null;
+      series.applyOptions({
+        priceFormat: {
+          type: "price",
+          precision: family === "YM" ? 0 : 2,
+          minMove: family === "YM" ? 1 : family === "GC" ? 0.1 : 0.25,
+        },
+      });
+      if (chartStyle === "candles") {
+        (series as ISeriesApi<"Candlestick", Time>).setData(
+          bars.map((bar) => ({
+            ...bar,
+            time: bar.time as UTCTimestamp,
+          })),
+        );
+      } else {
+        (series as ISeriesApi<"Line", Time>).setData(
+          bars.map((bar) => ({
+            time: bar.time as UTCTimestamp,
+            value: bar.close,
+          })),
+        );
+      }
     }
+    appliedRef.current = {
+      epoch,
+      firstTime,
+      length: bars.length,
+      anchorIndex,
+      anchorTime: bars[anchorIndex].time,
+      anchorClose: bars[anchorIndex].close,
+    };
     // `theme` is a dependency because the init effect recreates the price
     // series on a theme swap; without it the new series would never be fed
     // its bar data (candles would vanish in the swapped theme).
@@ -583,14 +683,16 @@ export function MarketChart({
       const next = buildFibGeometry(
         chart,
         series,
+        bars,
         fibs,
         timeframe,
         theme === "dark",
+        selectedFibId,
       );
       const key = next
         .map(
           (g) =>
-            `${g.fib.id}:${g.startX},${g.endX},${g.startY},${g.endY}:` +
+            `${g.fib.id}:${g.isSelected}:${g.startX},${g.endX},${g.startY},${g.endY}:` +
             g.lines.map((line) => line.y).join(","),
         )
         .join("|");
@@ -611,7 +713,7 @@ export function MarketChart({
     };
     raf = requestAnimationFrame(sync);
     return () => cancelAnimationFrame(raf);
-  }, [fibs, drawings, bars, timeframe, theme, chartStyle]);
+  }, [fibs, drawings, bars, timeframe, theme, chartStyle, selectedFibId]);
 
   // EMA lines draw progressively left -> right after the candles: emaReveal
   // sweeps 0 -> 1 (driven by the boot timeline) and we feed each line series a
@@ -623,8 +725,43 @@ export function MarketChart({
       return;
     }
     const reveal = Math.min(1, Math.max(0, emaReveal));
-    ema20s.setData(ema20Data.slice(0, Math.round(ema20Data.length * reveal)));
-    ema50s.setData(ema50Data.slice(0, Math.round(ema50Data.length * reveal)));
+
+    // At rest, tail-only changes stream through update() like the candles —
+    // appending never rewrites historical EMA values, so only the changed
+    // points need to move. The boot reveal sweep (reveal < 1) and structural
+    // changes still use setData.
+    const epoch = chartEpochRef.current;
+    const firstTime = ema20Data[0]?.time ?? null;
+    const prev = emaAppliedRef.current;
+    const incremental =
+      reveal === 1 &&
+      prev !== null &&
+      firstTime !== null &&
+      prev.epoch === epoch &&
+      prev.firstTime === firstTime &&
+      ema20Data.length >= prev.length &&
+      ema20Data.length - prev.length <= 8;
+
+    if (incremental) {
+      for (
+        let index = Math.max(0, prev.length - 1);
+        index < ema20Data.length;
+        index += 1
+      ) {
+        ema20s.update(ema20Data[index]);
+        if (index < ema50Data.length) {
+          ema50s.update(ema50Data[index]);
+        }
+      }
+    } else {
+      ema20s.setData(ema20Data.slice(0, Math.round(ema20Data.length * reveal)));
+      ema50s.setData(ema50Data.slice(0, Math.round(ema50Data.length * reveal)));
+    }
+    if (reveal === 1 && firstTime !== null) {
+      emaAppliedRef.current = { epoch, firstTime, length: ema20Data.length };
+    } else {
+      emaAppliedRef.current = null;
+    }
   }, [ema20Data, ema50Data, emaReveal, theme, chartStyle]);
 
   // Visible-range management. Snap to the right edge only on a genuine dataset
@@ -655,13 +792,25 @@ export function MarketChart({
     } else if (isPrepend) {
       const prepended = bars.length - prevLen;
       const range = ts.getVisibleLogicalRange();
+      const pre = preDataRangeRef.current;
       if (range && prepended > 0) {
-        ts.setVisibleLogicalRange({
-          from: range.from + prepended,
-          to: range.to + prepended,
-        });
+        // lightweight-charts re-anchors the view ITSELF across setData when
+        // the last bar is in view (right-edge tracking) but preserves raw
+        // logical indices when scrolled into history. Compare against the
+        // pre-setData range: if the library already moved the window by
+        // roughly the prepend amount, adding our own correction would
+        // double-shift the view into whitespace.
+        const alreadyAnchored =
+          pre !== null && Math.abs(range.from - pre.from) > prepended / 2;
+        if (!alreadyAnchored) {
+          ts.setVisibleLogicalRange({
+            from: range.from + prepended,
+            to: range.to + prepended,
+          });
+        }
       }
     }
+    preDataRangeRef.current = null;
 
     selKeyRef.current = selKey;
     prevBarsLenRef.current = bars.length;
@@ -711,9 +860,10 @@ export function MarketChart({
   // marker, for the read-only Viewer. A no-op when `trade` is null (the admin
   // chart passes nothing here). Cleanup is guarded because a theme/style swap
   // disposes the series before this effect's cleanup runs.
+  const hasBarData = bars.length > 0;
   useEffect(() => {
     const series = seriesRef.current;
-    if (!series || !trade) {
+    if (!series || !trade || !hasBarData) {
       return;
     }
 
@@ -788,7 +938,10 @@ export function MarketChart({
         // series disposed by a theme/style swap; chart.remove() handles cleanup
       }
     };
-  }, [trade, theme, chartStyle, family, bars]);
+    // hasBarData (not `bars`) keeps the overlay from detaching/re-attaching —
+    // a visible blink — on every live tick or silent refresh; it only needs to
+    // re-attach once data first exists or when the series is recreated.
+  }, [trade, theme, chartStyle, family, hasBarData]);
 
   function handleAnchorMove(
     event: ReactPointerEvent<SVGCircleElement>,
@@ -1120,6 +1273,7 @@ export function MarketChart({
             color,
             opacity,
             isActive,
+            isSelected,
             lines,
             startX,
             endX,
@@ -1137,7 +1291,7 @@ export function MarketChart({
                     y1={y}
                     y2={y}
                     stroke={color}
-                    strokeWidth={isActive ? 1.35 : 1}
+                    strokeWidth={isSelected ? 1.7 : isActive ? 1.35 : 1}
                   />
                   <text
                     data-fib-line-label
@@ -1162,20 +1316,22 @@ export function MarketChart({
                 </g>
               ))}
 
-              {isActive &&
+              {(isActive || isSelected) &&
               !readOnly &&
               startX !== null &&
               endX !== null &&
               startY !== null &&
               endY !== null ? (
                 <>
+                  {/* The dotted anchor connector: the swing (high↔low) this
+                      fib is drawn from. */}
                   <line
                     x1={startX}
                     y1={startY}
                     x2={endX}
                     y2={endY}
                     stroke={color}
-                    strokeWidth={1.4}
+                    strokeWidth={isSelected ? 1.6 : 1.4}
                     strokeDasharray="7 7"
                   />
                   {[

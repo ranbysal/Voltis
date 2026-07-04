@@ -14,6 +14,8 @@ import { cn } from "@/lib/utils";
 export function FibLayersPanel({
   family,
   fibs,
+  selectedId,
+  onSelect,
   onCreate,
   onToggleVisible,
   onToggleLock,
@@ -25,6 +27,8 @@ export function FibLayersPanel({
 }: {
   family: SymbolFamily;
   fibs: FibDrawing[];
+  selectedId: string | null;
+  onSelect: (fib: FibDrawing) => void;
   onCreate: (timeframe: Timeframe, direction: FibDirection) => void;
   onToggleVisible: (fib: FibDrawing) => void;
   onToggleLock: (fib: FibDrawing) => void;
@@ -103,11 +107,17 @@ export function FibLayersPanel({
               item.direction === direction,
           );
           const visible = fib?.visible ?? false;
+          const selected = fib !== undefined && fib.id === selectedId;
 
           return (
             <div
               key={timeframe}
-              className="flex items-center gap-1.5 rounded-lg border border-line bg-card py-2 pl-2.5 pr-1.5"
+              className={cn(
+                "flex items-center gap-1.5 rounded-lg border py-2 pl-2.5 pr-1.5",
+                selected
+                  ? "border-[#4b8ee8] bg-card-soft"
+                  : "border-line bg-card",
+              )}
             >
               <button
                 onClick={() =>
@@ -121,9 +131,25 @@ export function FibLayersPanel({
               >
                 {visible ? <Eye size={13} /> : <EyeOff size={13} />}
               </button>
-              <span className="min-w-0 flex-1 text-[10px] font-medium text-ink">
+              <button
+                onClick={() =>
+                  fib ? onSelect(fib) : onCreate(timeframe, direction)
+                }
+                aria-label={`Show ${timeframe} ${direction} fib on the chart`}
+                title={
+                  fib
+                    ? selected
+                      ? "Deselect"
+                      : "Highlight this fib on the chart"
+                    : "Create this fib"
+                }
+                className={cn(
+                  "v-press min-w-0 flex-1 text-left text-[10px] font-medium",
+                  selected ? "text-[#4b8ee8]" : "text-ink",
+                )}
+              >
                 {timeframe}
-              </span>
+              </button>
               <button
                 disabled={!fib}
                 onClick={() => fib && onToggleLock(fib)}

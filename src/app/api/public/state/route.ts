@@ -1,13 +1,19 @@
 import { and, desc, eq } from "drizzle-orm";
 import { trades, workspacePreferences } from "@/db/schema";
+import { hasViewerAccess } from "@/lib/auth";
 import { ensureTradingSchema, getDatabase } from "@/lib/db";
 
 /**
- * Public, read-only feed for the /viewer page: the admin's open trades and fib
- * drawings. This is exactly the data the viewer exists to broadcast — no
- * credentials, account identifiers, or secrets are ever included.
+ * Read-only feed for the /viewer page: the admin's open trades and fib
+ * drawings — no credentials, account identifiers, or secrets are ever
+ * included. When the viewer password gate is enabled, this feed honors the
+ * same access check as the page itself.
  */
 export async function GET() {
+  if (!(await hasViewerAccess())) {
+    return Response.json({ error: "Viewer access required" }, { status: 401 });
+  }
+
   const database = getDatabase();
   if (!database || !(await ensureTradingSchema())) {
     return Response.json(

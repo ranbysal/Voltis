@@ -181,3 +181,111 @@ export function passwordMatches(input: string) {
 export function emailMatches(input: string) {
   return input.trim().toLowerCase() === adminEmail();
 }
+
+/* ------------------------------ viewer gate ------------------------------ */
+//
+// A second, lighter tier of access: when VOLTIS_VIEWER_PASSWORD is set, the
+// public /viewer page (and its trades feed) requires that password once, then
+// remembers the visitor with a signed 30-day cookie. Admins pass automatically.
+// With the variable unset the viewer stays open, matching the previous
+// behavior, so enabling/disabling is purely a deployment decision.
+
+const VIEWER_COOKIE = "voltis_viewer";
+const VIEWER_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
+
+type ViewerPayload = {
+  viewer: true;
+  expiresAt: number;
+};
+
+function viewerPassword() {
+  const configured = process.env.VOLTIS_VIEWER_PASSWORD;
+  return configured && configured.length > 0 ? configured : undefined;
+}
+
+export function isViewerGateEnabled() {
+  return Boolean(viewerPassword() && sessionSecret());
+}
+
+export function viewerPasswordMatches(input: string) {
+  const configured = viewerPassword();
+  if (!configured) {
+    return false;
+  }
+  const inputBuffer = Buffer.from(input);
+  const configuredBuffer = Buffer.from(configured);
+  return (
+    inputBuffer.length === configuredBuffer.length &&
+    timingSafeEqual(inputBuffer, configuredBuffer)
+  );
+}
+
+export function createViewerToken() {
+  const payload: ViewerPayload = {
+    viewer: true,
+    expiresAt: Math.floor(Date.now() / 1000) + VIEWER_LIFETIME_SECONDS,
+  };
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = sign(encoded);
+  return signature ? `${encoded}.${signature}` : null;
+}
+
+function verifyViewerToken(token: string | undefined | null) {
+  if (!token) {
+    return null;
+  }
+  const [encoded, signature] = token.split(".");
+  const expected = encoded ? sign(encoded) : null;
+  if (!encoded || !signature || !expected) {
+    return null;
+  }
+  const suppliedBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (
+    suppliedBuffer.length !== expectedBuffer.length ||
+    !timingSafeEqual(suppliedBuffer, expectedBuffer)
+  ) {
+    return null;
+  }
+  try {
+    const payload = JSON.parse(
+      Buffer.from(encoded, "base64url").toString("utf8"),
+    ) as ViewerPayload;
+    if (
+      payload.viewer !== true ||
+      payload.expiresAt <= Math.floor(Date.now() / 1000)
+    ) {
+      return null;
+    }
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True when the current request may see viewer content: the gate is disabled,
+ * the visitor holds a valid viewer cookie, or they are the signed-in admin.
+ */
+export async function hasViewerAccess() {
+  if (!isViewerGateEnabled()) {
+    return true;
+  }
+  if (await currentSession()) {
+    return true;
+  }
+  const cookieStore = await cookies();
+  return verifyViewerToken(cookieStore.get(VIEWER_COOKIE)?.value) !== null;
+}
+
+export function viewerCookie(token: string) {
+  return {
+    name: VIEWER_COOKIE,
+    value: token,
+    httpOnly: true,
+    secure: isProduction(),
+    sameSite: "strict" as const,
+    path: "/",
+    maxAge: VIEWER_LIFETIME_SECONDS,
+  };
+}

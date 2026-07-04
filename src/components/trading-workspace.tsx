@@ -264,6 +264,8 @@ export function TradingWorkspace() {
   const [chartTool, setChartTool] = useState<ChartTool>("crosshair");
   const [magnetOn, setMagnetOn] = useState(false);
   const [drawingsHidden, setDrawingsHidden] = useState(false);
+  // Fib layer highlighted from the panel (full opacity + anchor connector).
+  const [selectedFibId, setSelectedFibId] = useState<string | null>(null);
   const [showFibPanel, setShowFibPanel] = useState(true);
   const [showTradePanel, setShowTradePanel] = useState(true);
   const [boot, setBoot] = useState<{ active: boolean; phase: BootPhase }>({
@@ -628,6 +630,68 @@ export function TradingWorkspace() {
     [],
   );
 
+  // Silent tail refresh: pull just the latest few buckets and merge them into
+  // the END of the series — never touching scrolled-in history, never flipping
+  // the loading state, never replacing the window (a wholesale replace shifts
+  // every logical index and reads as a visible jump). This is what keeps the
+  // chart TradingView-smooth while the live stream is unavailable.
+  const refreshLatestBars = useCallback(async () => {
+    const gen = requestGenRef.current;
+    const { family, timeframe } = selectionRef.current;
+    try {
+      const response = await fetch(
+        `/api/market/history?family=${family}&timeframe=${timeframe}&count=10`,
+        { cache: "no-store" },
+      );
+      if (!response.ok || gen !== requestGenRef.current) {
+        return;
+      }
+      const history = (await response.json()) as {
+        provider: string;
+        bars: MarketBar[];
+      };
+      if (
+        gen !== requestGenRef.current ||
+        history.provider !== "databento" ||
+        history.bars.length === 0
+      ) {
+        return;
+      }
+      for (const bar of history.bars) {
+        seenBarTimesRef.current.add(bar.time);
+      }
+      setBars((current) => {
+        if (current.length === 0) {
+          return current;
+        }
+        const lastTime = current[current.length - 1].time;
+        let next: MarketBar[] | null = null;
+        for (const bar of history.bars) {
+          if (bar.time < lastTime) {
+            continue; // history behind the tail is already correct
+          }
+          if (bar.time === lastTime) {
+            const existing = (next ?? current)[current.length - 1];
+            if (
+              existing.close !== bar.close ||
+              existing.high !== bar.high ||
+              existing.low !== bar.low
+            ) {
+              next = next ?? [...current];
+              next[current.length - 1] = bar; // authoritative full bucket
+            }
+          } else {
+            next = next ?? [...current];
+            next.push(bar);
+          }
+        }
+        return next ?? current;
+      });
+    } catch {
+      // silent — the next tick retries
+    }
+  }, []);
+
   // Back-scroll: fetch the bars immediately before the oldest one we hold and
   // prepend them. Guarded so only one request runs at a time, responses for a
   // stale family/timeframe are dropped, and we stop at the dataset start.
@@ -963,26 +1027,19 @@ export function TradingWorkspace() {
     ) {
       return;
     }
-    // Historical fallback refresh. Each refresh re-pulls (and replaces) the
-    // window from Databento, so keep it gentle (60s) to limit data usage;
-    // real-time updates come from the live gateway when it is connected.
+    // Historical fallback refresh while the live stream is down: a light,
+    // SILENT tail merge every 20s (a handful of buckets, appended/updated in
+    // place). No loading pulse, no window replacement, no view shift — and
+    // safe during a back-scroll because it never touches older bars.
     const interval = window.setInterval(() => {
-      // Don't clobber a back-scroll: replacing the window would discard the
-      // older bars the user paged in (and a concurrent prepend would corrupt
-      // the array). Skip while paged back or while a load is in flight.
-      if (pagedBackRef.current || olderLoadingRef.current) {
-        return;
-      }
-      void loadMarketHistory(workspace.family, workspace.timeframe);
-    }, 60_000);
+      void refreshLatestBars();
+    }, 20_000);
     return () => window.clearInterval(interval);
   }, [
     hydrated,
-    loadMarketHistory,
+    refreshLatestBars,
     marketMeta.provider,
     marketStreamStatus,
-    workspace.family,
-    workspace.timeframe,
   ]);
 
   useEffect(() => {
@@ -1150,7 +1207,18 @@ export function TradingWorkspace() {
 
   function selectFamily(family: SymbolFamily) {
     patchWorkspace({ family });
+    // A selected fib belongs to the previous instrument; drop the highlight.
+    setSelectedFibId(null);
     void loadMarketHistory(family, workspace.timeframe);
+  }
+
+  // Panel row click: highlight that layer on the chart (toggle), making it
+  // visible if its eye was off so "select" always means "show me this fib".
+  function selectFib(fib: FibDrawing) {
+    setSelectedFibId((current) => (current === fib.id ? null : fib.id));
+    if (!fib.visible) {
+      updateFib(fib.id, { visible: true });
+    }
   }
 
   function selectTimeframe(timeframe: Timeframe) {
@@ -1195,9 +1263,10 @@ export function TradingWorkspace() {
       return;
     }
 
+    const id = nanoid();
     setWorkspace((current) => {
       const replacement: FibDrawing = {
-        id: nanoid(),
+        id,
         family: current.family,
         timeframe,
         direction,
@@ -1223,6 +1292,8 @@ export function TradingWorkspace() {
         ],
       };
     });
+    // Highlight the fresh layer so the row click reads as "show me this fib".
+    setSelectedFibId(id);
   }
 
   // Drop a hand-drawn fib for the active family/timeframe. Manual layers are
@@ -1878,6 +1949,7 @@ export function TradingWorkspace() {
                 magnet={magnetOn}
                 hideDrawings={drawingsHidden}
                 drawings={visibleDrawings}
+                selectedFibId={selectedFibId}
                 onCreateDrawing={createDrawing}
                 onUpdateDrawing={updateDrawing}
                 onLoadOlder={(oldestTime) => void loadOlderHistory(oldestTime)}
@@ -1958,6 +2030,8 @@ export function TradingWorkspace() {
           <FibLayersPanel
             family={workspace.family}
             fibs={workspace.fibs}
+            selectedId={selectedFibId}
+            onSelect={selectFib}
             onCreate={addFib}
             onToggleVisible={(fib) =>
               updateFib(fib.id, { visible: !fib.visible })
@@ -1965,12 +2039,15 @@ export function TradingWorkspace() {
             onToggleLock={(fib) => updateFib(fib.id, { locked: !fib.locked })}
             onRefresh={(fib) => void refreshFib(fib)}
             onRefreshAll={refreshAllFibs}
-            onDelete={(fib) =>
+            onDelete={(fib) => {
+              setSelectedFibId((current) =>
+                current === fib.id ? null : current,
+              );
               setWorkspace((current) => ({
                 ...current,
                 fibs: current.fibs.filter((item) => item.id !== fib.id),
-              }))
-            }
+              }));
+            }}
             onExport={exportFibs}
             onClose={() => setShowFibPanel(false)}
           />
